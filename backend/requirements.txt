@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+beanie
+motor
+pydantic
+python-dotenv
+google-auth
+google-api-python-client
+google-genai
