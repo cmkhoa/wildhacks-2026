@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import contextlib
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
+
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from models import User, Task, Subtask
@@ -44,3 +48,9 @@ def health_check():
 @app.get("/")
 def root():
     return {"message": "Welcome to Chronos API for ADHD Calendar"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # Default to 8080 as requested
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
