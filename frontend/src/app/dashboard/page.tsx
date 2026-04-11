@@ -10,7 +10,7 @@ export default function Home() {
     if (!taskInput.trim()) return;
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/tasks/process', {
+      const res = await fetch('http://localhost:8080/api/tasks/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_input: taskInput })

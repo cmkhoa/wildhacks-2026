@@ -11,7 +11,7 @@ export default function LoginPage() {
         <p className="text-white/60 mb-10 text-sm">Organize your ADHD brain, easily.</p>
 
         <a 
-          href="http://localhost:8000/auth/login"
+          href="http://localhost:8080/auth/login"
           className="group relative flex items-center justify-center w-full bg-white text-black py-4 rounded-xl font-medium shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-95 transition-all outline-none"
         >
           <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24">
