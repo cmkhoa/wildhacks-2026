@@ -3,12 +3,13 @@ from fastapi.responses import RedirectResponse
 import os
 import httpx
 from typing import Optional
+from datetime import datetime, timedelta
+from models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# In a real app these would come from env vars
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "YOUR_GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "YOUR_GOOGLE_CLIENT_SECRET")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("REDIRECT_URI", "http://localhost:8000/auth/callback")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
@@ -19,6 +20,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive.file"
 ]
+
 
 @router.get("/login")
 def login_via_google():
@@ -35,12 +37,14 @@ def login_via_google():
     )
     return RedirectResponse(auth_url)
 
+
 @router.get("/callback")
 async def google_callback(code: str, error: Optional[str] = None):
-    """Handles the callback from Google, exchanges code for tokens, and creates/finds the user."""
+    """Exchanges code for tokens, fetches user info, persists to DB."""
     if error:
         raise HTTPException(status_code=400, detail=f"Google Auth Error: {error}")
-    
+
+    # 1. Exchange code for tokens
     token_url = "https://oauth2.googleapis.com/token"
     payload = {
         "code": code,
@@ -49,24 +53,70 @@ async def google_callback(code: str, error: Optional[str] = None):
         "redirect_uri": REDIRECT_URI,
         "grant_type": "authorization_code"
     }
-    
+
     async with httpx.AsyncClient() as client:
-        response = await client.post(token_url, data=payload)
-        
-    if response.status_code != 200:
+        token_resp = await client.post(token_url, data=payload)
+
+    if token_resp.status_code != 200:
         raise HTTPException(status_code=400, detail="Failed to fetch tokens from Google")
-        
-    tokens = response.json()
+
+    tokens = token_resp.json()
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
-    id_token = tokens.get("id_token")
-    
-    # In a full setup, we would:
-    # 1. Decode the id_token or hit Google UserInfo API to get email
-    # 2. Add/Find the User in the DB
-    # 3. Save the refresh_token encrypted.
-    # 4. Generate an App JWT token and redirect to frontend ?token=XX
-    
-    # Placeholder redirect to frontend with success
-    frontend_redirect = f"{FRONTEND_URL}/dashboard?auth=success"
+    expires_in = tokens.get("expires_in", 3600)
+
+    # 2. Fetch user info (email) from Google
+    async with httpx.AsyncClient() as client:
+        userinfo_resp = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+
+    if userinfo_resp.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to fetch user info")
+
+    userinfo = userinfo_resp.json()
+    email = userinfo.get("email")
+
+    # 3. Upsert user in MongoDB
+    try:
+        user = await User.find_one(User.email == email)
+        if user:
+            user.access_token = access_token
+            if refresh_token:  # Google only sends refresh_token on first consent
+                user.refresh_token = refresh_token
+            user.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+            await user.save()
+        else:
+            user = User(
+                email=email,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_expiry=datetime.utcnow() + timedelta(seconds=expires_in),
+            )
+            await user.insert()
+    except Exception as e:
+        print(f"⚠️  DB upsert skipped: {e}")
+
+    # 4. Redirect to frontend with email as session identifier
+    frontend_redirect = f"{FRONTEND_URL}/dashboard?auth=success&email={email}"
     return RedirectResponse(frontend_redirect)
+
+
+@router.get("/me")
+async def get_current_user(email: str):
+    """Returns the current user's profile from the DB."""
+    try:
+        user = await User.find_one(User.email == email)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {
+            "email": user.email,
+            "reward_points": user.reward_points,
+            "grace_passes": user.grace_passes,
+            "time_deviation_ratio": user.time_deviation_ratio,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Database unavailable")
