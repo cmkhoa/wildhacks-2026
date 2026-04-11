@@ -1,116 +1,229 @@
-'use client';
-import { useState } from 'react';
+"use client";
 
-export default function Home() {
-  const [taskInput, setTaskInput] = useState('');
-  const [subtasks, setSubtasks] = useState([{title: "Outline History Essay", reward_value: 10}]);
-  const [isLoading, setIsLoading] = useState(false);
+import { useMemo, useState } from "react";
+import { ChatPanel } from "@/components/ChatPanel";
+import { DayTimeline } from "@/components/DayTimeline";
+import { GemCounter } from "@/components/GemCounter";
+import { FocusBlock, NowPanel } from "@/components/NowPanel";
 
-  const handleSchedule = async () => {
-    if (!taskInput.trim()) return;
-    setIsLoading(true);
-    try {
-      const res = await fetch('http://localhost:8080/api/tasks/process', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_input: taskInput })
-      });
-      const data = await res.json();
-      if (data.status === 'success') {
-        if (data.parsed_plan?.subtasks) {
-          setSubtasks(data.parsed_plan.subtasks);
-        }
-        setTaskInput('');
-      } else {
-        alert(data.detail || "Error scheduling tasks");
-      }
-    } catch (e) {
-      console.error("Failed to schedule", e);
-      alert("Could not connect to backend");
-    }
-    setIsLoading(false);
+const starterBlocks: FocusBlock[] = [
+  {
+    id: "morning-reset",
+    timeRange: "9:00 - 9:20",
+    title: "Open planner and choose the first task",
+    status: "completed",
+    durationMinutes: 20,
+  },
+  {
+    id: "essay-outline",
+    timeRange: "9:25 - 10:05",
+    title: "Outline history essay",
+    status: "active",
+    durationMinutes: 40,
+  },
+  {
+    id: "email-sweep",
+    timeRange: "10:15 - 10:35",
+    title: "Reply to two important emails",
+    status: "planned",
+    durationMinutes: 20,
+  },
+  {
+    id: "stretch-break",
+    timeRange: "10:35 - 10:45",
+    title: "Water, stretch, and reset desk",
+    status: "planned",
+    durationMinutes: 10,
+  },
+  {
+    id: "project-draft",
+    timeRange: "11:00 - 11:45",
+    title: "Draft project notes for team check-in",
+    status: "planned",
+    durationMinutes: 45,
+  },
+];
+
+export default function DashboardPage() {
+  const [blocks, setBlocks] = useState(starterBlocks);
+  const [selectedBlockId, setSelectedBlockId] = useState("essay-outline");
+  const [isRunning, setIsRunning] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isChatExpanded, setIsChatExpanded] = useState(false);
+  const [isTasksExpanded, setIsTasksExpanded] = useState(false);
+  const [gemCount, setGemCount] = useState(1);
+  const [celebrationKey, setCelebrationKey] = useState(0);
+  const [doneMessage, setDoneMessage] = useState("");
+
+  const selectedBlock = useMemo(
+    () => blocks.find((block) => block.id === selectedBlockId) ?? blocks[0],
+    [blocks, selectedBlockId],
+  );
+
+  const selectBlock = (blockId: string) => {
+    setSelectedBlockId(blockId);
+    setIsRunning(false);
+    setIsFocusMode(false);
+    setIsChatExpanded(false);
+    setIsTasksExpanded(false);
+    setDoneMessage("");
+    setBlocks((currentBlocks) =>
+      currentBlocks.map((block) => ({
+        ...block,
+        status:
+          block.status === "completed"
+            ? "completed"
+            : block.id === blockId
+              ? "active"
+              : "planned",
+      })),
+    );
   };
 
-  return (
-    <main className="min-h-screen bg-black text-white selection:bg-indigo-500/30 overflow-hidden relative font-sans">
-      {/* Background gradients */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-600/20 blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-violet-600/20 blur-[120px] pointer-events-none" />
+  const completeBlock = () => {
+    setIsRunning(false);
+    setIsFocusMode(false);
+    setIsChatExpanded(false);
+    setIsTasksExpanded(false);
+    setDoneMessage("Block done. Nice.");
+    setGemCount((count) => count + 1);
+    setCelebrationKey((key) => key + 1);
+    setBlocks((currentBlocks) =>
+      currentBlocks.map((block) =>
+        block.id === selectedBlockId
+          ? { ...block, status: "completed" }
+          : block,
+      ),
+    );
+  };
 
-      <div className="max-w-6xl mx-auto px-4 py-12 relative z-10 flex flex-col min-h-screen">
-        <header className="mb-16 flex items-center justify-between">
+  const startFocusMode = () => {
+    setDoneMessage("");
+    setIsFocusMode(true);
+    setIsRunning(true);
+    setIsChatExpanded(false);
+    setIsTasksExpanded(false);
+  };
+
+  const focusGridClass = isFocusMode
+    ? isChatExpanded && isTasksExpanded
+      ? "lg:grid-cols-[420px_minmax(520px,1fr)_340px]"
+      : isChatExpanded
+        ? "lg:grid-cols-[420px_minmax(520px,1fr)_64px]"
+        : isTasksExpanded
+          ? "lg:grid-cols-[64px_minmax(520px,1fr)_340px]"
+          : "lg:grid-cols-[64px_minmax(520px,1fr)_64px]"
+    : "lg:grid-cols-2";
+
+  return (
+    <main className="min-h-screen bg-[linear-gradient(145deg,#edf6f3_0%,#f7fbfa_48%,#e9f4f1_100%)] text-[#203b37]">
+      <div className="mx-auto flex min-h-screen max-w-[1440px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        <header className="flex flex-col gap-4 rounded-[8px] border border-[#d2e3df] bg-white/90 p-5 shadow-[0_18px_45px_rgba(35,74,67,0.08)] sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">Chronos</h1>
-            <p className="text-white/50 text-sm mt-1">Your AI-powered executive function assistant</p>
+            <p className="text-base font-semibold text-[#2f8f83]">
+              Chronos dashboard
+            </p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-normal text-[#182f2b] md:text-4xl">
+              One clear block at a time
+            </h1>
           </div>
-          <div className="flex items-center space-x-3 bg-white/5 px-4 py-2 rounded-full border border-white/10 backdrop-blur-md">
-             <span className="text-sm font-medium text-white/80">Rewards: </span>
-             <span className="text-indigo-400 font-bold">120 pts</span>
-             <span className="w-1 h-1 rounded-full bg-white/20 mx-1"></span>
-             <span className="text-violet-400 text-sm">2 Passes</span>
-          </div>
+          <GemCounter count={gemCount} />
         </header>
 
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-8 flex-1">
-          {/* Main Input & Current Actions */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="relative group">
-              <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-500"></div>
-              <div className="relative bg-[#0d0d0d] border border-white/10 rounded-2xl p-2 shadow-2xl backdrop-blur-xl">
-                <textarea 
-                  value={taskInput}
-                  onChange={(e) => setTaskInput(e.target.value)}
-                  placeholder="Brain dump what you need to get done..."
-                  className="w-full bg-transparent text-white placeholder-white/30 p-4 min-h-[120px] resize-none focus:outline-none focus:ring-0 text-lg"
+        <div
+          className={`grid flex-1 gap-5 transition-all duration-500 ${focusGridClass}`}
+        >
+          {isFocusMode ? (
+            isChatExpanded ? (
+              <div className="order-2 transition-all duration-500 lg:order-none lg:col-start-1">
+                <ChatPanel
+                  isFocusMode
+                  onCollapse={() => setIsChatExpanded(false)}
                 />
-                <div className="flex justify-end p-2">
-                  <button 
-                    onClick={handleSchedule}
-                    disabled={isLoading}
-                    className="bg-white text-black hover:bg-gray-200 transition-colors px-6 py-2.5 rounded-xl font-medium shadow-[0_0_15px_rgba(255,255,255,0.1)] active:scale-95 disabled:opacity-50"
-                  >
-                    {isLoading ? "Scheduling..." : "Schedule for me"}
-                  </button>
-                </div>
               </div>
+            ) : (
+              <CollapsedRail
+                label="Coach"
+                hint="Expand chat"
+                side="left"
+                onClick={() => setIsChatExpanded(true)}
+              />
+            )
+          ) : (
+            <div className="order-2 transition-all duration-500 lg:order-none lg:col-start-1">
+              <ChatPanel />
             </div>
+          )}
 
-            {/* Subtasks rendering */}
-            <div className="bg-[#0a0a0a] rounded-2xl border border-white/5 p-6 mt-8">
-              <h2 className="text-lg font-medium text-white/80 mb-4">Current Focus</h2>
-                {subtasks.map((st, i) => (
-                  <div key={i} className="group flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:border-indigo-500/30 transition-all cursor-pointer">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-5 h-5 rounded border border-white/30 group-hover:border-indigo-400 transition-colors flex items-center justify-center"></div>
-                      <span className="text-white/90">{st.title}</span>
-                    </div>
-                    <span className="text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded-md">+{st.reward_value} pts</span>
-                  </div>
-                ))}
-            </div>
-
+          <div className="order-1 min-w-0 transition-all duration-500 lg:order-none lg:col-start-2">
+            <NowPanel
+              key={selectedBlock.id}
+              block={selectedBlock}
+              isRunning={isRunning}
+              isFocusMode={isFocusMode}
+              celebrationKey={celebrationKey}
+              doneMessage={doneMessage}
+              onStart={startFocusMode}
+              onPause={() => setIsRunning(false)}
+              onDone={completeBlock}
+            />
           </div>
 
-          {/* Calendar visual */}
-          <div className="bg-gradient-to-b from-white/5 to-transparent rounded-2xl border border-white/10 p-6 flex flex-col h-full">
-            <h2 className="text-lg font-medium text-white/80 mb-6">Today's Timeline</h2>
-            <div className="flex-1 space-y-6 relative before:absolute before:inset-0 before:ml-2 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-white/10 before:to-transparent">
-               
-               <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                  <div className="w-3 h-3 bg-indigo-500 rounded-full border-4 box-content border-black relative z-10 shadow-[0_0_10px_rgba(99,102,241,0.5)]"></div>
-                  <div className="w-[calc(100%-2rem)] md:w-[calc(50%-2rem)] p-4 rounded-xl bg-white/5 border border-white/10 group-hover:border-indigo-500/50 group-hover:bg-indigo-500/5 transition-all">
-                    <div className="flex items-center justify-between space-x-2 mb-1">
-                      <div className="font-bold text-white">Focus Time</div>
-                      <time className="font-mono text-xs text-indigo-400">14:00</time>
-                    </div>
-                    <div className="text-white/60 text-sm">Write intro paragraph</div>
-                  </div>
-               </div>
-
-            </div>
-          </div>
-        </section>
+          {isFocusMode ? (
+            isTasksExpanded ? (
+              <div className="order-3 transition-all duration-500 lg:order-none lg:col-start-3">
+                <DayTimeline
+                  blocks={blocks}
+                  selectedBlockId={selectedBlockId}
+                  onSelectBlock={selectBlock}
+                  onCollapse={() => setIsTasksExpanded(false)}
+                />
+              </div>
+            ) : (
+              <CollapsedRail
+                label="Tasks"
+                hint="Expand tasks"
+                side="right"
+                onClick={() => setIsTasksExpanded(true)}
+              />
+            )
+          ) : null}
+        </div>
       </div>
     </main>
+  );
+}
+
+type CollapsedRailProps = {
+  label: string;
+  hint: string;
+  side: "left" | "right";
+  onClick: () => void;
+};
+
+function CollapsedRail({ label, hint, side, onClick }: CollapsedRailProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group relative order-3 flex min-h-[72px] items-center justify-center rounded-[8px] border border-[#cfe0dc] bg-white/75 px-4 py-3 text-[#276f67] shadow-[0_14px_34px_rgba(35,74,67,0.08)] transition-all duration-300 hover:-translate-y-0.5 hover:border-[#2f8f83] hover:bg-white hover:shadow-[0_18px_42px_rgba(35,74,67,0.12)] active:scale-[0.98] lg:order-none lg:min-h-[calc(100vh-170px)] lg:px-2 ${
+        side === "left" ? "lg:col-start-1" : "lg:col-start-3"
+      }`}
+      aria-label={hint}
+    >
+      <span className="hidden text-sm font-bold uppercase tracking-[0.12em] [writing-mode:vertical-rl] lg:block">
+        {label}
+      </span>
+      <span className="text-sm font-bold uppercase tracking-[0.12em] lg:hidden">
+        {label}
+      </span>
+      <span
+        className={`pointer-events-none absolute top-4 hidden rounded-[8px] bg-[#203b37] px-3 py-2 text-sm font-semibold text-white opacity-0 shadow-lg transition group-hover:opacity-100 lg:block ${
+          side === "left" ? "left-14" : "right-14"
+        }`}
+      >
+        {hint}
+      </span>
+    </button>
   );
 }

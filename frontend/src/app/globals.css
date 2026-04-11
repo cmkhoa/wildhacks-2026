@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #edf6f3;
+  --foreground: #203b37;
 }
 
 @theme inline {
@@ -12,15 +12,176 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.celebration-pop {
+  animation: celebration-pop 420ms ease-out;
+}
+
+.active-focus-card {
+  animation: focus-glow 2200ms ease-in-out infinite;
+}
+
+.active-timeline-card {
+  animation: timeline-glow 2400ms ease-in-out infinite;
+}
+
+.button-pop {
+  transform-origin: center;
+}
+
+.timer-breathe {
+  animation: timer-breathe 1000ms ease-in-out infinite;
+}
+
+.progress-shimmer {
+  background-size: 180% 100%;
+  animation: progress-shimmer 1800ms linear infinite;
+}
+
+.message-enter {
+  animation: message-enter 260ms ease-out both;
+}
+
+.gem-glow {
+  animation: gem-glow 3200ms ease-in-out infinite;
+}
+
+.confetti {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  height: 10px;
+  width: 10px;
+  border-radius: 3px;
+  opacity: 0;
+  animation: tiny-confetti 850ms ease-out forwards;
+}
+
+.confetti-one {
+  background: #2f8f83;
+  --confetti-x: -110px;
+  --confetti-y: 90px;
+}
+
+.confetti-two {
+  background: #f1c75b;
+  --confetti-x: -45px;
+  --confetti-y: 130px;
+}
+
+.confetti-three {
+  background: #e68d73;
+  --confetti-x: 35px;
+  --confetti-y: 115px;
+}
+
+.confetti-four {
+  background: #82b7dd;
+  --confetti-x: 95px;
+  --confetti-y: 80px;
+}
+
+.confetti-five {
+  background: #9ac9a8;
+  --confetti-x: 145px;
+  --confetti-y: 125px;
+}
+
+@keyframes celebration-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.015);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes focus-glow {
+  0%,
+  100% {
+    box-shadow: 0 18px 45px rgba(35, 74, 67, 0.09),
+      0 0 0 0 rgba(47, 143, 131, 0.2);
+  }
+  50% {
+    box-shadow: 0 24px 58px rgba(35, 74, 67, 0.14),
+      0 0 0 8px rgba(47, 143, 131, 0.08);
+  }
+}
+
+@keyframes timeline-glow {
+  0%,
+  100% {
+    box-shadow: 0 12px 28px rgba(47, 143, 131, 0.16);
+  }
+  50% {
+    box-shadow: 0 16px 34px rgba(47, 143, 131, 0.24);
+  }
+}
+
+@keyframes timer-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
+}
+
+@keyframes progress-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 180% 50%;
+  }
+}
+
+@keyframes message-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes gem-glow {
+  0%,
+  100% {
+    box-shadow: 0 1px 2px rgba(35, 74, 67, 0.08);
+  }
+  50% {
+    box-shadow: 0 10px 28px rgba(47, 143, 131, 0.13);
+  }
+}
+
+@keyframes tiny-confetti {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.8) rotate(0deg);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--confetti-x), var(--confetti-y)) scale(1)
+      rotate(160deg);
+  }
 }
