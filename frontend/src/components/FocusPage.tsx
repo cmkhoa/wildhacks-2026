@@ -331,13 +331,17 @@ export function FocusPage({ initialTask, subtaskData = [], docLinks = [], draftL
     <main className="h-screen w-full overflow-hidden bg-[#FDFCFB] font-sans text-[#424242] selection:bg-teal-200">
       <div className="mx-auto flex h-full w-full max-w-[1600px] flex-col px-6 py-6">
         <header className="mb-6 flex flex-shrink-0 items-center justify-between">
-          <div>
-            <p className="text-[12px] font-extrabold uppercase tracking-widest text-[#828b9a]">
-              Focus mode
-            </p>
-            <h1 className="mt-1 text-[28px] font-extrabold tracking-tight text-[#303030]">
-              {initialTask.title}
-            </h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-[28px] font-black tracking-tighter text-[#2F8F83]">Unstuck</h1>
+            <div className="h-6 w-[2px] bg-[#e2e8f0]" />
+            <div>
+              <p className="text-[12px] font-extrabold uppercase tracking-widest text-[#828b9a]">
+                Focus mode
+              </p>
+              <h2 className="mt-1 text-[20px] font-bold tracking-tight text-[#303030]">
+                {initialTask.title}
+              </h2>
+            </div>
           </div>
           <Link
             href="/dashboard"
