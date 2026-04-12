@@ -210,11 +210,39 @@ export default function Home() {
     if (!inputStr.trim()) return;
 
     setIsLoading(true);
-    setChatHistory((previous) => [...previous, { role: 'user', text: inputStr }]);
+    const userMessage: ChatMessage = { role: 'user', text: inputStr };
+    const nextHistory: ChatMessage[] = [...chatHistory, userMessage];
+    setChatHistory(nextHistory);
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
-      const nextHistory = [...chatHistory, { role: 'user', text: inputStr }];
+      const chatRes = await fetch(`${backendUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: inputStr,
+          email: email || 'anonymous',
+          chat_history: chatHistory,
+        }),
+      });
+      const chatData = await chatRes.json();
+
+      if (!chatRes.ok || chatData.status !== 'success') {
+        throw new Error(chatData.detail || 'Chat request failed');
+      }
+
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        text: chatData.reply || 'I’m here. What would help most right now?',
+      };
+      setChatHistory((previous) => [...previous, assistantMessage]);
+
+      if (!chatData.should_create_task) {
+        setIsLoading(false);
+        setTaskInput('');
+        return;
+      }
+
       const res = await fetch(`${backendUrl}/api/tasks/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -234,7 +262,7 @@ export default function Home() {
             ...previous,
             {
               role: 'assistant',
-              text: `Got it. I added ${tasks.length} small step${tasks.length === 1 ? '' : 's'} to your queue.`,
+              text: `I also added ${tasks.length} small step${tasks.length === 1 ? '' : 's'} to your task queue.`,
             },
           ]);
 

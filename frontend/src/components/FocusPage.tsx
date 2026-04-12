@@ -50,6 +50,7 @@ export function FocusPage({ initialTask, subtaskData = [], docLinks = [], draftL
     perSubtaskMinutes * 60,
   );
   const [chatDraft, setChatDraft] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
   const [activeSubtaskIndex, setActiveSubtaskIndex] = useState(0);
   const [allDone, setAllDone] = useState(false);
   const [isCompletingSubtask, setIsCompletingSubtask] = useState(false);
@@ -274,19 +275,50 @@ export function FocusPage({ initialTask, subtaskData = [], docLinks = [], draftL
     await handleSubtaskDone();
   };
 
-  const handleSendChat = () => {
+  const handleSendChat = async () => {
     const trimmed = chatDraft.trim();
-    if (!trimmed) return;
+    if (!trimmed || isChatLoading) return;
 
-    setChatHistory((previous) => [
-      ...previous,
-      { role: 'user', text: trimmed },
-      {
-        role: 'assistant',
-        text: 'Got it. Stay with the current block and make the next step tiny.',
-      },
-    ]);
+    const userMessage: ChatMessage = { role: 'user', text: trimmed };
+    const nextHistory = [...chatHistory, userMessage];
+    setChatHistory(nextHistory);
     setChatDraft('');
+    setIsChatLoading(true);
+
+    try {
+      const res = await fetch(`${getBackendUrl()}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          chat_history: chatHistory,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || data.status !== 'success') {
+        throw new Error(data.detail || 'Chat request failed');
+      }
+
+      setChatHistory((previous) => [
+        ...previous,
+        {
+          role: 'assistant',
+          text: data.reply || 'I’m here. What would help most right now?',
+        },
+      ]);
+    } catch (error) {
+      console.error('Failed to send focus chat message:', error);
+      setChatHistory((previous) => [
+        ...previous,
+        {
+          role: 'assistant',
+          text: 'I had trouble reaching the coach. Try again in a moment.',
+        },
+      ]);
+    } finally {
+      setIsChatLoading(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -354,10 +386,10 @@ export function FocusPage({ initialTask, subtaskData = [], docLinks = [], draftL
                 <button
                   type="button"
                   onClick={handleSendChat}
-                  disabled={!chatDraft.trim()}
+                  disabled={!chatDraft.trim() || isChatLoading}
                   className="flex flex-shrink-0 items-center justify-center rounded-full bg-[#67B59F] px-5 py-4 text-sm font-black text-white shadow-sm transition-colors hover:bg-[#5aa38e] disabled:opacity-50"
                 >
-                  Send
+                  {isChatLoading ? '...' : 'Send'}
                 </button>
               </div>
             </div>

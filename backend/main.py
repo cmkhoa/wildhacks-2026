@@ -18,7 +18,7 @@ except Exception:
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from models import User, Task, Subtask
-from routers import auth, tasks, rewards
+from routers import auth, chat, tasks, rewards
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,6 +47,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(chat.router)
 app.include_router(tasks.router)
 app.include_router(rewards.router)
 
