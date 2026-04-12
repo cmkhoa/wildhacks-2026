@@ -26,6 +26,9 @@ class Task(Document):
     actual_minutes: Optional[int] = None
     deadline: Optional[datetime] = None
     is_fixed_deadline: bool = False  # True for hard deadlines like "due Friday"
+    explicit_start_time: Optional[str] = None  # e.g., "17:00" if user asks for specific time
+    start_immediately: bool = False
+    is_ai_managed: bool = True       # False = user pinned this block, never displaced
     scheduled_start: Optional[datetime] = None  # When the calendar event starts
     scheduled_end: Optional[datetime] = None  # When the calendar event ends
     started_at: Optional[datetime] = None
