@@ -434,6 +434,15 @@ function TaskItem({
   onSelect: () => void;
   task: TaskBlock;
 }) {
+  const formatBlockMinutes = (minutes: number) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hours > 0) {
+      return `${hours}:${mins.toString().padStart(2, '0')}:00`;
+    }
+    return `${mins}:00`; // Return MM:00 for minutes under an hour
+  };
+
   return (
     <button
       type="button"
@@ -467,7 +476,7 @@ function TaskItem({
 
       <div className="mt-4 flex flex-wrap gap-2">
         <span className="rounded-full bg-[#F4F5F7] px-3 py-1.5 text-[11px] font-bold text-[#788294]">
-          {task.block_minutes} min
+          {formatBlockMinutes(task.block_minutes)}
         </span>
         <span className="rounded-full bg-[#FDF3DE] px-3 py-1.5 text-[11px] font-bold text-[#7a6a45]">
           +{task.reward_value} gems
