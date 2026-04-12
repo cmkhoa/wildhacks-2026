@@ -129,12 +129,12 @@ NOW = datetime(2026, 4, 12, 1, 50, 0)
 
 TESTS = [
     {
-        "label": '[SCENARIO 1] "do assignment at 5am, takes 1 hour"',
-        "expected_start": "05:00",
-        "expected_end":   "06:00",
+        "label": '[SCENARIO 1] "do assignment at 6am, takes 1 hour"',
+        "expected_start": "06:00",
+        "expected_end":   "07:00",
         "duration": 60,
         "parsed_data": {
-            "explicit_start_time": "05:00",
+            "explicit_start_time": "06:00",
             "start_immediately": False,
             "preferred_time": None,
             "deadline": None,
@@ -143,15 +143,15 @@ TESTS = [
         "busy": [],
     },
     {
-        "label": '[SCENARIO 2] "assignment DUE at 5am, takes 1 hour" (backfill)',
-        "expected_start": "04:00",
-        "expected_end":   "05:00",
+        "label": '[SCENARIO 2] "assignment DUE at 6am, takes 1 hour" (backfill)',
+        "expected_start": "05:00",
+        "expected_end":   "06:00",
         "duration": 60,
         "parsed_data": {
             "explicit_start_time": None,
             "start_immediately": False,
             "preferred_time": None,
-            "deadline": "2026-04-12T05:00:00",
+            "deadline": "2026-04-12T06:00:00",
             "is_fixed_deadline": True,
         },
         "busy": [],
