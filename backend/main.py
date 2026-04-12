@@ -56,6 +56,7 @@ def health_check():
     return {"status": "ok"}
 
 @app.get("/")
+@app.head("/")
 def root():
     return {"message": "Welcome to Unstuck API for ADHD Calendar"}
 
