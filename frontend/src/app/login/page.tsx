@@ -38,11 +38,11 @@ export default function LoginPage() {
           </p>
 
           <h1 className="mb-5 text-[48px] font-extrabold leading-[1.02] tracking-tight text-[#243B37] md:text-[68px]">
-            Chronos
+            UnStuck
           </h1>
 
           <p className="mb-10 max-w-[360px] text-[18px] font-semibold leading-8 text-[#6F7D7A]">
-            One clear block at a time.
+            When starting feels hard, we make it easier.
           </p>
 
           <a

@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     if getattr(app, 'mongodb_client', None):
         app.mongodb_client.close()
 
-app = FastAPI(title="ADHD Agentic Calendar App Backend", lifespan=lifespan)
+app = FastAPI(title="UnStuck Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,7 +57,7 @@ def health_check():
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to Chronos API for ADHD Calendar"}
+    return {"message": "Welcome to UnStuck API"}
 
 if __name__ == "__main__":
     import uvicorn
