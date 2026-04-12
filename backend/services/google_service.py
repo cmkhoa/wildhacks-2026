@@ -39,6 +39,11 @@ def get_docs_service(access_token: str, refresh_token: str):
     return build('docs', 'v1', credentials=creds)
 
 
+def get_gmail_service(access_token: str, refresh_token: str):
+    creds = _build_credentials(access_token, refresh_token)
+    return build('gmail', 'v1', credentials=creds)
+
+
 # ─── Calendar Operations ───────────────────────────────────────────────
 
 def fetch_events(service, time_min: datetime, time_max: datetime, user_timezone: str = "UTC") -> List[Dict]:
@@ -180,3 +185,33 @@ def format_events_for_context(events: List[Dict]) -> str:
             lines.append(f"- {summary}")
 
     return "\n".join(lines)
+
+
+# ─── Gmail Operations ──────────────────────────────────────────────────
+
+def create_email_draft(gmail_service, subject: str, body: str, to: Optional[str] = None) -> str:
+    """Create a Gmail draft and return its URL."""
+    from email.message import EmailMessage
+    import base64
+
+    message = EmailMessage()
+    message.set_content(body)
+    if to:
+        message['To'] = to
+    message['Subject'] = subject
+
+    # Base64url encode the message
+    encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    draft = {
+        'message': {
+            'raw': encoded_message
+        }
+    }
+
+    try:
+        created_draft = gmail_service.users().drafts().create(userId='me', body=draft).execute()
+        draft_id = created_draft['id']
+        return f"https://mail.google.com/mail/#drafts?compose={draft_id}"
+    except Exception as e:
+        print(f"⚠️ Failed to create Gmail draft: {e}")
+        raise e

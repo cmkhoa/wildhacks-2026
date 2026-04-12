@@ -18,7 +18,8 @@ SCOPES = [
     "email",
     "profile",
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/drive.file"
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/gmail.compose"
 ]
 
 
@@ -115,6 +116,9 @@ async def get_current_user(email: str):
             "reward_points": user.reward_points,
             "grace_passes": user.grace_passes,
             "time_deviation_ratio": user.time_deviation_ratio,
+            "current_streak": getattr(user, "current_streak", 0),
+            "longest_streak": getattr(user, "longest_streak", 0),
+            "previous_streak": getattr(user, "previous_streak", 0),
         }
     except HTTPException:
         raise

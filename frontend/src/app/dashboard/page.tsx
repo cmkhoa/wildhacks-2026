@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
@@ -19,6 +20,8 @@ type TaskBlock = {
   block_minutes: number;
   steps?: string[];
   subtasks?: SubtaskInfo[];
+  docLinks?: string[];
+  draftLinks?: string[];
 };
 
 type ChatMessage = {
@@ -37,8 +40,10 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
   const [gemsEarned, setGemsEarned] = useState(0);
+  const [currentStreak, setCurrentStreak] = useState(0);
+  const [previousStreak, setPreviousStreak] = useState(0);
   const [email, setEmail] = useState<string | null>(null);
-  
+
   const username = email ? email.split('@')[0] : 'Haiha';
   const router = useRouter();
 
@@ -46,21 +51,19 @@ export default function Home() {
   const [queuedTasks, setQueuedTasks] = useState<TaskBlock[]>([]);
   const [completedTasks, setCompletedTasks] = useState<TaskBlock[]>([]);
 
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    { role: 'assistant', text: 'Keep the next move small enough to start.' },
-  ]);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
 
   const fetchTasks = async (userEmail: string) => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
       const res = await fetch(`${backendUrl}/api/tasks?email=${encodeURIComponent(userEmail)}`);
       const data = await res.json();
-      
+
       if (data.tasks) {
         const allCompleted: TaskBlock[] = [];
         const allPending: TaskBlock[] = [];
         let gems = 0;
-        
+
         data.tasks.forEach((task: any) => {
           const subtasks: SubtaskInfo[] = (task.subtasks || []).map((st: any) => ({
             id: st.id,
@@ -87,6 +90,8 @@ export default function Home() {
             // Pass subtask titles as steps so focus page can show them
             steps: subtasks.map(s => s.title),
             subtasks,
+            docLinks: task.drive_doc_link ? [task.drive_doc_link] : [],
+            draftLinks: task.gmail_draft_link ? [task.gmail_draft_link] : [],
           };
 
           if (allSubsDone) {
@@ -97,10 +102,10 @@ export default function Home() {
             gems += completedSubs.reduce((sum, s) => sum + s.reward_value, 0);
           }
         });
-        
+
         setCompletedTasks(allCompleted);
         setGemsEarned(gems);
-        
+
         if (allPending.length > 0) {
           setActiveTask(allPending[0]);
           setQueuedTasks(allPending.slice(1));
@@ -114,6 +119,44 @@ export default function Home() {
     }
   };
 
+  const fetchProfile = async (userEmail: string) => {
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      const res = await fetch(`${backendUrl}/auth/me?email=${encodeURIComponent(userEmail)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setGemsEarned(data.reward_points ?? 0);
+        setCurrentStreak(data.current_streak ?? 0);
+        setPreviousStreak(data.previous_streak ?? 0);
+      }
+    } catch (e) {
+      console.error('Failed to fetch profile', e);
+    }
+  };
+
+  const handleRestoreStreak = async () => {
+    if (!email) return;
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      const res = await fetch(`${backendUrl}/api/tasks/streaks/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setCurrentStreak(data.current_streak);
+        setGemsEarned(data.reward_points);
+        setPreviousStreak(0);
+      } else {
+        alert(data.message || 'Failed to restore streak');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error restoring streak');
+    }
+  };
+
   useEffect(() => {
     const urlEmail = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('email') : null;
     let finalEmail = urlEmail;
@@ -122,9 +165,10 @@ export default function Home() {
     } else {
       finalEmail = localStorage.getItem('userEmail');
     }
-    
+
     if (finalEmail) {
       setEmail(finalEmail);
+      fetchProfile(finalEmail);
       fetchTasks(finalEmail);
     }
   }, []);
@@ -140,12 +184,25 @@ export default function Home() {
       reward: String(selectedTask.reward_value),
       minutes: String(selectedTask.block_minutes),
     });
-    
+
     if (selectedTask.id) params.append('id', selectedTask.id);
-    if (selectedTask.steps && selectedTask.steps.length > 0) {
+
+    // Pass full subtask data (with DB IDs) for sequential completion
+    if (selectedTask.subtasks && selectedTask.subtasks.length > 0) {
+      params.append('subtasks', JSON.stringify(selectedTask.subtasks));
+    } else if (selectedTask.steps && selectedTask.steps.length > 0) {
       params.append('steps', JSON.stringify(selectedTask.steps));
     }
-    
+
+    // Pass doc links for quick access in focus mode
+    if (selectedTask.docLinks && selectedTask.docLinks.length > 0) {
+      params.append('docLinks', JSON.stringify(selectedTask.docLinks));
+    }
+
+    if (selectedTask.draftLinks && selectedTask.draftLinks.length > 0) {
+      params.append('draftLinks', JSON.stringify(selectedTask.draftLinks));
+    }
+
     router.push(`/focus?${params.toString()}`);
   };
 
@@ -157,10 +214,15 @@ export default function Home() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      const nextHistory = [...chatHistory, { role: 'user', text: inputStr }];
       const res = await fetch(`${backendUrl}/api/tasks/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_input: inputStr, email: email || 'anonymous' }),
+        body: JSON.stringify({
+          user_input: inputStr,
+          email: email || 'anonymous',
+          chat_history: nextHistory
+        }),
       });
       const data = await res.json();
 
@@ -202,6 +264,8 @@ export default function Home() {
             block_minutes: subtaskInfos.reduce((sum, s) => sum + s.estimated_minutes, 0),
             steps: subtaskInfos.map(s => s.title),
             subtasks: subtaskInfos,
+            docLinks: data.created_docs || [],
+            draftLinks: data.created_drafts || [],
           };
 
           // Set task from response (this ensures it shows even without DB)
@@ -246,15 +310,43 @@ export default function Home() {
               Welcome, {username}
             </h1>
           </div>
-          <div className="flex cursor-pointer items-center space-x-2 rounded-full bg-[#FDF3DE] px-5 py-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.02)] transition-shadow hover:shadow-md">
-            <span className="relative bottom-[1px] text-xl leading-none text-[#E6B95C]">
-              &#9830;
-            </span>
-            <span className="text-sm font-bold text-[#7a6a45]">
-              Today&apos;s Gems: {gemsEarned}
-            </span>
+          <div className="flex items-center gap-3">
+            {currentStreak > 0 && (
+              <div className="flex cursor-default items-center space-x-1 rounded-full bg-[#FFEAE5] px-4 py-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.02)] transition-shadow hover:shadow-md">
+                <span className="text-xl leading-none">🔥</span>
+                <span className="text-sm font-bold text-[#E55A3D]">{currentStreak}</span>
+              </div>
+            )}
+            
+            <Link 
+              href="/badges"
+              className="flex cursor-pointer items-center space-x-2 rounded-full bg-[#FDF3DE] px-5 py-2.5 shadow-[0_2px_10px_rgba(0,0,0,0.02)] transition-shadow hover:shadow-md"
+            >
+              <span className="relative bottom-[1px] text-xl leading-none text-[#E6B95C]">
+                &#9830;
+              </span>
+              <span className="text-sm font-bold text-[#7a6a45]">{gemsEarned}</span>
+            </Link>
           </div>
         </header>
+
+        {previousStreak > 0 && currentStreak === 0 && (
+          <div className="mb-6 flex items-center justify-between rounded-[24px] bg-[#FFEAE5] p-5 shadow-sm">
+            <div className="flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl shadow-sm">💔</div>
+              <div>
+                <h3 className="text-sm font-extrabold text-[#E55A3D]">Streak Broken!</h3>
+                <p className="text-xs font-semibold text-[#A6412D]">Your {previousStreak}-task streak was lost.</p>
+              </div>
+            </div>
+            <button 
+              onClick={handleRestoreStreak}
+              className="rounded-full bg-[#E55A3D] px-6 py-2.5 text-xs font-extrabold text-white shadow hover:bg-[#D44B30]"
+            >
+              Restore with Gems
+            </button>
+          </div>
+        )}
 
         <section className="grid min-h-0 flex-1 grid-cols-1 gap-6 pb-4 lg:grid-cols-2 xl:gap-8">
           <PlanningPanel
@@ -297,7 +389,7 @@ function PlanningPanel({
           Planning chat
         </p>
         <h2 className="mt-3 text-[34px] font-extrabold tracking-tight text-[#303030]">
-          What needs to feel easier?
+          Any tasks on your mind?
         </h2>
       </div>
 
@@ -305,11 +397,10 @@ function PlanningPanel({
         {chatHistory.map((msg, index) => (
           <div
             key={`${msg.role}-${index}`}
-            className={`rounded-3xl border px-5 py-5 text-[13px] leading-relaxed shadow-[0_2px_8px_rgba(0,0,0,0.04)] ${
-              msg.role === 'user'
-                ? 'ml-10 border-[#DCEAE4] bg-[#F1F8F5] text-[#5f766d]'
-                : 'mr-10 border-gray-100 bg-white font-bold text-[#424242]'
-            }`}
+            className={`rounded-3xl border px-5 py-5 text-[13px] leading-relaxed shadow-[0_2px_8px_rgba(0,0,0,0.04)] ${msg.role === 'user'
+              ? 'ml-10 border-[#DCEAE4] bg-[#F1F8F5] text-[#5f766d]'
+              : 'mr-10 border-gray-100 bg-white font-bold text-[#424242]'
+              }`}
           >
             {msg.text}
           </div>
@@ -386,9 +477,6 @@ function TaskStartPanel({
             <p className="text-[12px] font-extrabold uppercase tracking-widest text-[#8d8d8d]">
               No tasks yet
             </p>
-            <h3 className="mt-4 text-[34px] font-extrabold tracking-tight text-[#2B2B2B]">
-              Ask the coach to make a plan.
-            </h3>
           </div>
         )}
       </div>
@@ -447,19 +535,17 @@ function TaskItem({
     <button
       type="button"
       onClick={onSelect}
-      className={`w-full rounded-3xl border px-5 py-5 text-left transition-all active:scale-[0.99] ${
-        isSelected
-          ? 'border-[#B5A6CC] bg-white shadow-[0_8px_24px_rgba(181,166,204,0.18)]'
-          : 'border-gray-100 bg-white/75 shadow-[0_2px_8px_rgba(0,0,0,0.035)] hover:border-gray-200 hover:bg-white hover:shadow-md'
-      }`}
+      className={`w-full rounded-3xl border px-5 py-5 text-left transition-all active:scale-[0.99] ${isSelected
+        ? 'border-[#B5A6CC] bg-white shadow-[0_8px_24px_rgba(181,166,204,0.18)]'
+        : 'border-gray-100 bg-white/75 shadow-[0_2px_8px_rgba(0,0,0,0.035)] hover:border-gray-200 hover:bg-white hover:shadow-md'
+        }`}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <span
-          className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest ${
-            index === 0
-              ? 'bg-[#E7F3ED] text-[#6cb593]'
-              : 'bg-[#F0F1F3] text-[#9a9a9a]'
-          }`}
+          className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest ${index === 0
+            ? 'bg-[#E7F3ED] text-[#6cb593]'
+            : 'bg-[#F0F1F3] text-[#9a9a9a]'
+            }`}
         >
           {index === 0 ? 'Current / next' : `Task ${index + 1}`}
         </span>

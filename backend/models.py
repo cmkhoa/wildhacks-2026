@@ -20,7 +20,7 @@ class Task(Document):
     title: str
     description: Optional[str] = None
     original_prompt: str
-    status: str = "pending"  # pending | in_progress | completed
+    status: str = "pending"  # pending | in_progress | completed | missed
     priority: str = "medium"  # high | medium | low
     estimated_minutes: int = 30
     actual_minutes: Optional[int] = None
@@ -33,8 +33,11 @@ class Task(Document):
     scheduled_end: Optional[datetime] = None  # When the calendar event ends
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    missed: bool = False
+    opened_but_failed: bool = False
     calendar_event_id: Optional[str] = None
     drive_doc_link: Optional[str] = None
+    gmail_draft_link: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -48,6 +51,10 @@ class User(Document):
     time_deviation_ratio: float = 1.5
     deviation_samples: int = 0  # Number of completed tasks used to compute ratio
     reward_points: int = 0
+    current_streak: int = 0
+    previous_streak: int = 0
+    longest_streak: int = 0
+    last_streak_broken_at: Optional[datetime] = None
     grace_passes: int = 0
     timezone: str = "America/Chicago"  # User's local timezone for calendar scheduling
 

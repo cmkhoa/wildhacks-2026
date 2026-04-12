@@ -48,9 +48,15 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
     """
     user_input = payload.get("user_input")
     email = payload.get("email")
+    chat_history_raw = payload.get("chat_history", [])
 
     if not user_input:
         raise HTTPException(status_code=400, detail="Missing user_input")
+
+    # Format chat history for context
+    chat_history_str = "No prior messages."
+    if chat_history_raw and isinstance(chat_history_raw, list):
+        chat_history_str = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('text', '')}" for msg in chat_history_raw])
 
     # ── 1. Resolve user ───────────────────────────────────────────────
     user = None
@@ -89,6 +95,7 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         current_time=now_local.strftime("%Y-%m-%d %H:%M %Z"),  # local time with tz name
         existing_events=events_context,
         user_timezone=user_tz_str,
+        chat_history=chat_history_str,
     )
 
     # ── 3b. Handle clarification requests from LLM ───────────────────
@@ -128,9 +135,11 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         except (ValueError, TypeError):
             print(f"⚠️  Could not parse deadline: {deadline_str}")
 
-    # ── 6. Create Google Drive docs if needed ─────────────────────────
+    # ── 6. Create Google Drive docs and Gmail drafts if needed ────────
     created_docs = []
+    created_drafts = []
     if has_google:
+        from services.google_service import get_drive_service, get_docs_service, get_gmail_service, create_email_draft
         try:
             drive_svc = get_drive_service(user.access_token, user.refresh_token)
             docs_svc = get_docs_service(user.access_token, user.refresh_token)
@@ -146,6 +155,20 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
                         created_docs.append(doc_url)
                     except Exception as e:
                         print(f"⚠️  Doc creation failed: {e}")
+                
+                if st.get("needs_email") and st.get("email_subject"):
+                    try:
+                        gmail_svc = get_gmail_service(user.access_token, user.refresh_token)
+                        draft_url = create_email_draft(
+                            gmail_svc,
+                            subject=st.get("email_subject", "New Email"),
+                            body=st.get("email_body", ""),
+                            to=st.get("email_recipient")
+                        )
+                        st["gmail_draft_link"] = draft_url
+                        created_drafts.append(draft_url)
+                    except Exception as e:
+                        print(f"⚠️  Draft creation failed: {e}")
         except Exception as e:
             print(f"⚠️  Google Drive API failed: {e}")
 
@@ -164,6 +187,8 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
             is_fixed_deadline=is_fixed_deadline,
             explicit_start_time=parsed_data.get("explicit_start_time"),
             start_immediately=parsed_data.get("start_immediately", False),
+            drive_doc_link=created_docs[0] if created_docs else None,
+            gmail_draft_link=created_drafts[0] if created_drafts else None,
         )
         await new_task.insert()
         task_id = str(new_task.id)
@@ -203,6 +228,7 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         "estimation_messages": estimation_messages,
         "parsed_plan": parsed_data,
         "created_docs": created_docs,
+        "created_drafts": created_drafts,
         "rebalance": {
             "displaced_count": rebalance_result.get("displaced_count", 0),
             "overflow": rebalance_result.get("overflow", []),
@@ -259,6 +285,24 @@ async def ripple_schedule(payload: Dict[str, Any] = Body(...)):
     }
 
 
+# ─── POST /start — Mark task as started ───────────────────────────────
+
+@router.post("/start")
+async def start_task(payload: Dict[str, Any] = Body(...)):
+    """Mark a task as started to track if user opened it before failing."""
+    task_id = payload.get("task_id")
+    if not task_id:
+        raise HTTPException(status_code=400, detail="Missing task_id")
+    try:
+        task = await Task.get(task_id)
+        if task and not task.started_at:
+            task.started_at = datetime.utcnow()
+            task.status = "in_progress"
+            await task.save()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ─── POST /complete — Mark task done + update deviation ─────────────
 
 @router.post("/complete")
@@ -294,12 +338,22 @@ async def complete_task(payload: Dict[str, Any] = Body(...)):
                     )
                     user.time_deviation_ratio = new_ratio
                     user.deviation_samples = new_samples
-                    await user.save()
+                    
+                # Gamification: Update Streaks
+                user.current_streak += 1
+                if user.current_streak > user.longest_streak:
+                    user.longest_streak = user.current_streak
+                    
+                await user.save()
+                
+                if task.estimated_minutes > 0:
                     return {
                         "status": "success",
-                        "new_deviation_ratio": new_ratio,
-                        "message": f"✅ Done! Your time accuracy ratio updated to {new_ratio}x."
+                        "new_deviation_ratio": user.time_deviation_ratio,
+                        "current_streak": user.current_streak,
+                        "message": f"✅ Done! Your time accuracy ratio updated to {user.time_deviation_ratio}x."
                     }
+                return {"status": "success", "current_streak": user.current_streak, "message": "✅ Task completed! Streak increased."}
         return {"status": "success", "message": "✅ Task completed!"}
     except HTTPException:
         raise
@@ -330,7 +384,7 @@ async def complete_subtask(payload: Dict[str, Any] = Body(...)):
         if email:
             user = await User.find_one({"email": email})
             if user:
-                user.reward_points += st.reward_value
+                user.reward_points += 1  # Always 1 gem per subtask
                 await user.save()
 
                 # Update calendar event description to reflect completion
@@ -361,11 +415,31 @@ async def complete_subtask(payload: Dict[str, Any] = Body(...)):
 
 @router.get("/")
 async def list_tasks(email: str):
-    """List all tasks with subtasks for a user."""
+    """List all tasks with subtasks for a user and check for missed tasks."""
     try:
+        user = await User.find_one({"email": email})
+        now = datetime.utcnow()
+        streak_broken = False
+        
         tasks = await Task.find({"user_id": email}).sort("-created_at").to_list()
         result = []
         for task in tasks:
+            # Check if this task is missed
+            if task.status in ["pending", "in_progress"] and task.scheduled_end:
+                # If scheduled_end has passed by more than a brief grace period (e.g. 5 mins)
+                # Actually, simply passing scheduled_end is enough based on plan
+                if now > task.scheduled_end and not task.completed_at:
+                    task.status = "missed"
+                    task.missed = True
+                    if task.started_at:
+                        task.opened_but_failed = True
+                    await task.save()
+                    if user and user.current_streak > 0:
+                        user.previous_streak = user.current_streak
+                        user.current_streak = 0
+                        user.last_streak_broken_at = now
+                        streak_broken = True
+            
             subtasks = await Subtask.find({"task_id": str(task.id)}).sort("order").to_list()
             result.append({
                 "id": str(task.id),
@@ -379,6 +453,8 @@ async def list_tasks(email: str):
                 "scheduled_start": task.scheduled_start.isoformat() if task.scheduled_start else None,
                 "scheduled_end": task.scheduled_end.isoformat() if task.scheduled_end else None,
                 "calendar_event_id": task.calendar_event_id,
+                "drive_doc_link": task.drive_doc_link,
+                "gmail_draft_link": getattr(task, "gmail_draft_link", None),
                 "created_at": task.created_at.isoformat() if task.created_at else None,
                 "subtasks": [{
                     "id": str(st.id),
@@ -389,6 +465,10 @@ async def list_tasks(email: str):
                     "reward_value": st.reward_value,
                 } for st in subtasks],
             })
+            
+        if streak_broken and user:
+            await user.save()
+
         return {"tasks": result}
     except Exception as e:
         return {"tasks": [], "error": str(e)}
@@ -425,5 +505,53 @@ async def trigger_rebalance(payload: Dict[str, Any] = Body(...)):
             "overflow": result["overflow"],
             "warnings": result["warnings"],
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── POST /streaks/restore — Restore a broken streak ──────────────────
+
+@router.post("/streaks/restore")
+async def restore_streak(payload: Dict[str, Any] = Body(...)):
+    """Deduct gems to restore a broken streak."""
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email")
+
+    try:
+        user = await User.find_one({"email": email})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Check if there is a streak to restore
+        if user.previous_streak <= 0 or user.current_streak > 0:
+            return {"status": "error", "message": "No broken streak to restore."}
+
+        # Find the last missed task to determine cost
+        latest_missed_task = await Task.find(
+            {"user_id": email, "missed": True}
+        ).sort("-scheduled_end").first_or_none()
+
+        # Default cost is 10
+        cost = 10
+        if latest_missed_task and latest_missed_task.opened_but_failed:
+            cost = 5
+
+        if user.reward_points < cost:
+            return {"status": "error", "message": f"Not enough gems. Need {cost}."}
+
+        # Restore
+        user.reward_points -= cost
+        user.current_streak = user.previous_streak
+        user.previous_streak = 0
+        user.last_streak_broken_at = None
+        
+        await user.save()
+        return {
+            "status": "success", 
+            "current_streak": user.current_streak, 
+            "reward_points": user.reward_points,
+            "cost": cost
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

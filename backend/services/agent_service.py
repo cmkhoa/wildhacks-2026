@@ -15,6 +15,9 @@ Context about the user:
 - User's timezone: {user_timezone}
 - Their existing calendar events: {existing_events}
 
+Chat History Context (if any):
+{chat_history}
+
 Return ONLY a valid JSON object (no markdown, no code fences) with this exact schema:
 {{
   "title": "Short title of the overall task",
@@ -37,10 +40,14 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this exact sc
       ],
       "needs_doc": true,
       "doc_title": "Document title if a starter doc would help",
-      "doc_outline": "## Intro\\n- Key point 1\\n- Key point 2\\n\\n## Section 1\\n..."
-    }}
+      "doc_outline": "## Intro\\n- Key point 1\\n- Key point 2\\n\\n## Section 1\\n...",
+      "needs_email": true,
+      "email_subject": "Draft email subject",
+      "email_body": "Draft email body",
+      "email_recipient": "recipient@example.com"
+    }
   ]
-}}
+}
 
 SCHEDULING RULES:
 - "deadline": ONLY set this when the user says the task must be FINISHED/SUBMITTED/DUE by a 
@@ -65,7 +72,8 @@ TASK BREAKDOWN RULES:
 - Each task must have 1-5 concrete, actionable steps as subtasks
 - Steps should start with a verb and be specific enough to act on immediately
 - Assign priority: "high" for deadline-driven, "medium" for important, "low" for nice-to-have
-- If a subtask involves writing/creating, set needs_doc=true and provide a doc_outline
+- If a subtask involves writing/creating a document, set needs_doc=true and provide a doc_outline
+- If a subtask involves writing/sending an email, set needs_email=true and provide the email_subject, email_body, and email_recipient (if known).
 - The time estimate should be a realistic estimation of the time needed for such a task for someone with ADHD
 - Be flexible with the breakdown, simpler tasks can be done in 1-2 small subtasks while larger tasks can be broken down into more subtasks
 - Account for the user's deviation ratio when estimating minutes
@@ -77,7 +85,8 @@ User Task Dump:
 
 def parse_user_task(user_input: str, deviation_ratio: float = 1.5,
                     current_time: str = "", existing_events: str = "none",
-                    user_timezone: str = "America/Chicago"):
+                    user_timezone: str = "America/Chicago",
+                    chat_history: str = "No prior messages."):
     """Parse a natural language task dump into structured subtasks using Gemini."""
     prompt = PROMPT_TEMPLATE.format(
         user_input=user_input,
@@ -85,6 +94,7 @@ def parse_user_task(user_input: str, deviation_ratio: float = 1.5,
         current_time=current_time,
         existing_events=existing_events,
         user_timezone=user_timezone,
+        chat_history=chat_history,
     )
 
     try:

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 
 type TaskBlock = {
   id?: string;
@@ -17,24 +17,42 @@ type ChatMessage = {
   text: string;
 };
 
+type SubtaskData = {
+  id?: string;
+  title: string;
+  steps?: string[];
+  estimated_minutes?: number;
+  completed?: boolean;
+};
+
 type SubtaskItem = {
   id: string;
+  dbId?: string;       // MongoDB subtask ID for API calls
   text: string;
   checked: boolean;
+  steps?: string[];
 };
 
 type FocusPageProps = {
   initialTask: TaskBlock;
+  subtaskData?: SubtaskData[];
+  docLinks?: string[];
+  draftLinks?: string[];
 };
 
-export function FocusPage({ initialTask }: FocusPageProps) {
+export function FocusPage({ initialTask, subtaskData = [], docLinks = [], draftLinks = [] }: FocusPageProps) {
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(true);
   const [isRightCollapsed, setIsRightCollapsed] = useState(true);
+  const subtaskCount = Math.max(1, subtaskData.length || (initialTask.steps?.length ?? 1));
+  const perSubtaskMinutes = Math.ceil(initialTask.block_minutes / subtaskCount);
   const [isTimerRunning, setIsTimerRunning] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState(
-    initialTask.block_minutes * 60,
+    perSubtaskMinutes * 60,
   );
   const [chatDraft, setChatDraft] = useState('');
+  const [activeSubtaskIndex, setActiveSubtaskIndex] = useState(0);
+  const [allDone, setAllDone] = useState(false);
+  const [isCompletingSubtask, setIsCompletingSubtask] = useState(false);
 
   const router = useRouter();
 
@@ -42,16 +60,46 @@ export function FocusPage({ initialTask }: FocusPageProps) {
     { role: 'assistant', text: 'You are in focus mode. Keep only this block visible.' },
   ]);
 
-  const [subtasks, setSubtasks] = useState<SubtaskItem[]>(
-    initialTask.steps && initialTask.steps.length > 0 
-      ? initialTask.steps.map((st, i) => ({ id: `step-${i}`, text: st, checked: false }))
-      : [
-          { id: 'open-doc', text: 'Open the essay document', checked: false },
-          { id: 'skim-notes', text: 'Skim notes and highlight three useful points', checked: false },
-          { id: 'write-outline', text: 'Write the rough intro and three section bullets', checked: false },
-          { id: 'mark-question', text: 'Mark one confusing part to ask about later', checked: false },
-        ]
-  );
+  // Build subtask list from structured data or fallback to steps
+  const [subtasks, setSubtasks] = useState<SubtaskItem[]>(() => {
+    if (subtaskData.length > 0) {
+      return subtaskData.map((st, i) => ({
+        id: `subtask-${i}`,
+        dbId: st.id,
+        text: st.title,
+        checked: st.completed ?? false,
+        steps: st.steps,
+      }));
+    }
+    if (initialTask.steps && initialTask.steps.length > 0) {
+      return initialTask.steps.map((st, i) => ({
+        id: `step-${i}`,
+        text: st,
+        checked: false,
+      }));
+    }
+    return [
+      { id: 'default-1', text: 'Start working on the task', checked: false },
+    ];
+  });
+
+  // Find the first unchecked subtask index and mark task started
+  useEffect(() => {
+    const firstUnchecked = subtasks.findIndex(s => !s.checked);
+    if (firstUnchecked >= 0) {
+      setActiveSubtaskIndex(firstUnchecked);
+    }
+    
+    // Mark task as started so streaks charge 5 instead of 10 if missed
+    if (initialTask.id) {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      fetch(`${backendUrl}/api/tasks/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: initialTask.id }),
+      }).catch(e => console.error("Failed to mark started", e));
+    }
+  }, []);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -86,43 +134,144 @@ export function FocusPage({ initialTask }: FocusPageProps) {
     ),
   );
 
-  const handlePause = () => setIsTimerRunning(false);
+  const completedCount = subtasks.filter(s => s.checked).length;
+  const currentSubtask = subtasks[activeSubtaskIndex];
 
-  const handleDone = async () => {
-    setIsTimerRunning(false);
-    
-    if (initialTask.id) {
-      try {
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
-        let email: string | null = null;
-        if (typeof window !== 'undefined') {
-          email = localStorage.getItem('userEmail');
-        }
-        
-        await fetch(`${backendUrl}/api/tasks/subtask/complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            subtask_id: initialTask.id,
-            email: email || undefined
-          })
-        });
-      } catch (e) {
-        console.error(e);
-      }
+  const getBackendUrl = () => process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+  const getEmail = () => typeof window !== 'undefined' ? localStorage.getItem('userEmail') : null;
+
+  // Complete a subtask via the API
+  const completeSubtaskApi = useCallback(async (subtaskDbId: string) => {
+    try {
+      const email = getEmail();
+      await fetch(`${getBackendUrl()}/api/tasks/subtask/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subtask_id: subtaskDbId,
+          email: email || undefined,
+        }),
+      });
+    } catch (e) {
+      console.error('Failed to complete subtask:', e);
     }
-    
-    router.push('/dashboard');
+  }, []);
+
+  // Complete the parent task via the API
+  const completeTaskApi = useCallback(async () => {
+    if (!initialTask.id) return;
+    try {
+      const email = getEmail();
+      const elapsedMinutes = Math.round((initialTask.block_minutes * 60 - timeRemaining) / 60);
+      await fetch(`${getBackendUrl()}/api/tasks/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task_id: initialTask.id,
+          actual_minutes: elapsedMinutes || initialTask.block_minutes,
+          email: email || undefined,
+        }),
+      });
+    } catch (e) {
+      console.error('Failed to complete task:', e);
+    }
+  }, [initialTask.id, initialTask.block_minutes, timeRemaining]);
+
+  const handlePause = () => setIsTimerRunning(false);
+  const handleResume = () => setIsTimerRunning(true);
+
+  // Check off the current subtask and advance to next
+  const handleSubtaskDone = async () => {
+    if (!currentSubtask || isCompletingSubtask) return;
+
+    setIsCompletingSubtask(true);
+
+    // Mark current subtask as checked
+    const updatedSubtasks = subtasks.map((s, i) =>
+      i === activeSubtaskIndex ? { ...s, checked: true } : s,
+    );
+    setSubtasks(updatedSubtasks);
+
+    // Call API if we have a DB ID
+    if (currentSubtask.dbId) {
+      await completeSubtaskApi(currentSubtask.dbId);
+    }
+
+    // Find next unchecked subtask
+    const nextUnchecked = updatedSubtasks.findIndex((s, i) => i > activeSubtaskIndex && !s.checked);
+    const anyUnchecked = updatedSubtasks.findIndex(s => !s.checked);
+
+    if (nextUnchecked >= 0) {
+      // Advance to next subtask after current
+      setActiveSubtaskIndex(nextUnchecked);
+      setTimeRemaining(perSubtaskMinutes * 60);
+      setIsTimerRunning(true);
+    } else if (anyUnchecked >= 0) {
+      // Wrap around to an earlier unchecked subtask
+      setActiveSubtaskIndex(anyUnchecked);
+      setTimeRemaining(perSubtaskMinutes * 60);
+      setIsTimerRunning(true);
+    } else {
+      // All subtasks complete!
+      setAllDone(true);
+      setIsTimerRunning(false);
+
+      await completeTaskApi();
+
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'assistant', text: '🎉 All subtasks done! Great work. Heading back to dashboard...' },
+      ]);
+
+      setTimeout(() => router.push('/dashboard'), 2000);
+    }
+
+    setIsCompletingSubtask(false);
   };
 
-  const toggleSubtask = (id: string) => {
-    setSubtasks((previous) =>
-      previous.map((subtask) =>
-        subtask.id === id
-          ? { ...subtask, checked: !subtask.checked }
-          : subtask,
-      ),
+  // Toggle a subtask from the side checklist
+  const toggleSubtask = async (id: string) => {
+    const idx = subtasks.findIndex(s => s.id === id);
+    if (idx < 0) return;
+
+    const subtask = subtasks[idx];
+    const newChecked = !subtask.checked;
+
+    setSubtasks(prev =>
+      prev.map(s => s.id === id ? { ...s, checked: newChecked } : s),
     );
+
+    // If checking off (not unchecking), call the API
+    if (newChecked && subtask.dbId) {
+      await completeSubtaskApi(subtask.dbId);
+    }
+
+    // If this was the active subtask and we just checked it, advance
+    if (newChecked && idx === activeSubtaskIndex) {
+      const updatedSubtasks = subtasks.map(s => s.id === id ? { ...s, checked: true } : s);
+      const nextUnchecked = updatedSubtasks.findIndex((s, i) => i > idx && !s.checked);
+      const anyUnchecked = updatedSubtasks.findIndex(s => !s.checked);
+
+      if (nextUnchecked >= 0) {
+        setActiveSubtaskIndex(nextUnchecked);
+      } else if (anyUnchecked >= 0) {
+        setActiveSubtaskIndex(anyUnchecked);
+      } else {
+        setAllDone(true);
+        setIsTimerRunning(false);
+        await completeTaskApi();
+        setTimeout(() => router.push('/dashboard'), 2000);
+      }
+    }
+  };
+
+  // Done button: mark current subtask done (or go back if all done)
+  const handleDone = async () => {
+    if (allDone) {
+      router.push('/dashboard');
+      return;
+    }
+    await handleSubtaskDone();
   };
 
   const handleSendChat = () => {
@@ -141,13 +290,9 @@ export function FocusPage({ initialTask }: FocusPageProps) {
   };
 
   const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secondsLeft = seconds % 60;
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${secondsLeft.toString().padStart(2, '0')}`;
-    }
-    return `${minutes}:${secondsLeft.toString().padStart(2, '0')}`;
+    const minutes = Math.ceil(seconds / 60);
+    if (minutes === 1) return '1 min';
+    return `${minutes} min`;
   };
 
   return (
@@ -159,7 +304,7 @@ export function FocusPage({ initialTask }: FocusPageProps) {
               Focus mode
             </p>
             <h1 className="mt-1 text-[28px] font-extrabold tracking-tight text-[#303030]">
-              One block. No clutter.
+              {initialTask.title}
             </h1>
           </div>
           <Link
@@ -218,22 +363,67 @@ export function FocusPage({ initialTask }: FocusPageProps) {
             </div>
           </SideRail>
 
+          {/* ── Center Panel ─────────────────────────────────── */}
           <div className="flex h-full flex-1 flex-col rounded-[48px] bg-white p-10 shadow-[0_10px_40px_rgba(0,0,0,0.02)] transition-all duration-500 ease-in-out xl:p-14">
             <div className="flex flex-shrink-0 items-center space-x-4">
               <span className="text-[11px] font-bold uppercase tracking-widest text-[#8d8d8d]">
-                Focus Now
+                {allDone ? 'All Done!' : `Subtask ${activeSubtaskIndex + 1} of ${subtasks.length}`}
               </span>
               {isTimerRunning && (
                 <span className="animate-pulse rounded-full bg-[#E7F3ED] px-3 py-1.5 text-[10px] font-bold tracking-wide text-[#6cb593] shadow-sm">
                   In motion
                 </span>
               )}
+              {allDone && (
+                <span className="rounded-full bg-[#E7F3ED] px-3 py-1.5 text-[10px] font-bold tracking-wide text-[#6cb593] shadow-sm">
+                  🎉 Complete
+                </span>
+              )}
             </div>
 
             <div className="flex flex-1 flex-col items-center justify-center">
-              <h1 className="-mt-8 w-full max-w-[95%] text-center font-sans text-[48px] font-extrabold leading-[1.05] tracking-tight text-[#2B2B2B] md:text-[64px] xl:text-[88px]">
-                {initialTask.title}
+              {/* Current subtask name — big center text */}
+              <h1 className="-mt-8 w-full max-w-[95%] text-center font-sans text-[48px] font-extrabold leading-[1.05] tracking-tight text-[#2B2B2B] md:text-[64px] xl:text-[80px]">
+                {allDone ? '🎉' : (currentSubtask?.text ?? initialTask.title)}
               </h1>
+
+              {/* Google Doc/Slides links */}
+              {(docLinks.length > 0 || draftLinks.length > 0) && (
+                <div className="mt-8 flex flex-wrap justify-center gap-4">
+                  {docLinks.map((url, i) => (
+                    <a
+                      key={`doc-${i}`}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-3 rounded-3xl border-2 border-dashed border-[#B5A6CC]/40 bg-white px-6 py-4 shadow-sm transition-all hover:border-[#B5A6CC] hover:shadow-md"
+                    >
+                      <svg className="h-7 w-7 text-[#4285F4] transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm4 18H6V4h7v5h5v11zM8 15h8v2H8v-2zm0-4h8v2H8v-2z"/>
+                      </svg>
+                      <span className="text-[13px] font-bold text-[#424242]">
+                        Open Doc {docLinks.length > 1 ? i + 1 : ''}
+                      </span>
+                    </a>
+                  ))}
+                  {draftLinks.map((url, i) => (
+                    <a
+                      key={`draft-${i}`}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-3 rounded-3xl border-2 border-dashed border-[#B5A6CC]/40 bg-white px-6 py-4 shadow-sm transition-all hover:border-[#B5A6CC] hover:shadow-md"
+                    >
+                      <svg className="h-7 w-7 text-[#EA4335] transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                      </svg>
+                      <span className="text-[13px] font-bold text-[#424242]">
+                        Gmail Draft {draftLinks.length > 1 ? i + 1 : ''}
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="mx-auto w-full max-w-[800px] flex-shrink-0">
@@ -242,27 +432,31 @@ export function FocusPage({ initialTask }: FocusPageProps) {
                   {formatTime(timeRemaining)}
                 </div>
 
-                <div className="relative h-5 w-full overflow-hidden rounded-full bg-[#F4F5F7] shadow-inner">
+                {/* Subtask progress bar */}
+                <div className="relative mb-3 h-3 w-full overflow-hidden rounded-full bg-[#F0F1F3]">
                   <div
-                    className="absolute bottom-0 left-0 top-0 rounded-full bg-[#87A48D] shadow-[inset_0_-2px_4px_rgba(0,0,0,0.1)] transition-all duration-1000 ease-linear"
-                    style={{ width: `${progressPercent}%` }}
+                    className="absolute bottom-0 left-0 top-0 rounded-full bg-[#B5A6CC] transition-all duration-500 ease-out"
+                    style={{ width: `${subtasks.length > 0 ? (completedCount / subtasks.length) * 100 : 0}%` }}
                   />
                 </div>
+                <p className="text-[11px] font-bold text-[#a1a1a1]">
+                  {completedCount} / {subtasks.length} subtasks
+                </p>
               </div>
 
               <div className="mx-auto grid w-full max-w-[600px] grid-cols-2 gap-6 xl:gap-8">
                 <button
-                  onClick={handlePause}
-                  disabled={!isTimerRunning}
-                  className="rounded-3xl border-b-4 border-[#deba5b] bg-[#EED077] py-5 text-[18px] font-extrabold tracking-wide text-white shadow-[0_4px_14px_0_rgba(238,208,119,0.39)] transition-all duration-300 hover:bg-[#deba5b] active:scale-[0.98] disabled:opacity-50 xl:py-7 xl:text-[22px]"
+                  onClick={isTimerRunning ? handlePause : handleResume}
+                  className="rounded-3xl border-b-4 border-[#deba5b] bg-[#EED077] py-5 text-[18px] font-extrabold tracking-wide text-white shadow-[0_4px_14px_0_rgba(238,208,119,0.39)] transition-all duration-300 hover:bg-[#deba5b] active:scale-[0.98] xl:py-7 xl:text-[22px]"
                 >
-                  Pause
+                  {isTimerRunning ? 'Pause' : 'Resume'}
                 </button>
                 <button
                   onClick={handleDone}
-                  className="rounded-3xl border-b-4 border-[#78957e] bg-[#87A48D] py-5 text-[18px] font-extrabold tracking-wide text-white shadow-[0_4px_14px_0_rgba(135,164,141,0.39)] transition-transform hover:bg-[#78957e] active:scale-[0.98] xl:py-7 xl:text-[22px]"
+                  disabled={isCompletingSubtask || allDone}
+                  className="rounded-3xl border-b-4 border-[#78957e] bg-[#87A48D] py-5 text-[18px] font-extrabold tracking-wide text-white shadow-[0_4px_14px_0_rgba(135,164,141,0.39)] transition-transform hover:bg-[#78957e] active:scale-[0.98] disabled:opacity-50 xl:py-7 xl:text-[22px]"
                 >
-                  Done
+                  {allDone ? '✓ All Done' : isCompletingSubtask ? '...' : 'Done'}
                 </button>
               </div>
             </div>
@@ -274,7 +468,11 @@ export function FocusPage({ initialTask }: FocusPageProps) {
             onClick={() => setIsRightCollapsed(!isRightCollapsed)}
             side="right"
           >
-            <SubtasksChecklist subtasks={subtasks} onToggle={toggleSubtask} />
+            <SubtasksChecklist
+              subtasks={subtasks}
+              activeIndex={activeSubtaskIndex}
+              onToggle={toggleSubtask}
+            />
           </SideRail>
         </section>
       </div>
@@ -340,9 +538,11 @@ function SideRail({
 function SubtasksChecklist({
   onToggle,
   subtasks,
+  activeIndex,
 }: {
   onToggle: (id: string) => void;
   subtasks: SubtaskItem[];
+  activeIndex: number;
 }) {
   const completedCount = subtasks.filter((subtask) => subtask.checked).length;
 
@@ -358,13 +558,15 @@ function SubtasksChecklist({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-2">
-        {subtasks.map((subtask) => (
+        {subtasks.map((subtask, index) => (
           <label
             key={subtask.id}
             className={`group flex cursor-pointer items-start gap-3 rounded-3xl border px-4 py-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition-all hover:border-gray-200 hover:shadow-md ${
               subtask.checked
                 ? 'border-[#DCEAE4] bg-[#F1F8F5] text-[#7b8d86]'
-                : 'border-gray-100 bg-white text-[#424242]'
+                : index === activeIndex
+                  ? 'border-[#B5A6CC] bg-white text-[#424242] shadow-[0_4px_16px_rgba(181,166,204,0.2)]'
+                  : 'border-gray-100 bg-white text-[#424242]'
             }`}
           >
             <input
@@ -373,13 +575,20 @@ function SubtasksChecklist({
               onChange={() => onToggle(subtask.id)}
               className="mt-0.5 h-5 w-5 flex-shrink-0 rounded-md border-gray-300 accent-[#67B59F]"
             />
-            <span
-              className={`text-[13px] font-bold leading-relaxed ${
-                subtask.checked ? 'line-through' : ''
-              }`}
-            >
-              {subtask.text}
-            </span>
+            <div className="flex-1">
+              <span
+                className={`text-[13px] font-bold leading-relaxed ${
+                  subtask.checked ? 'line-through' : ''
+                }`}
+              >
+                {subtask.text}
+              </span>
+              {index === activeIndex && !subtask.checked && (
+                <span className="ml-2 inline-block rounded-full bg-[#B5A6CC]/15 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-widest text-[#8a78a8]">
+                  Current
+                </span>
+              )}
+            </div>
           </label>
         ))}
       </div>

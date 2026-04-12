@@ -6,6 +6,9 @@ type FocusSearchParams = Promise<{
   minutes?: string;
   id?: string;
   steps?: string;
+  subtasks?: string;
+  docLinks?: string;
+  draftLinks?: string;
 }>;
 
 export default async function Page({
@@ -22,6 +25,24 @@ export default async function Page({
     if (params.steps) steps = JSON.parse(params.steps);
   } catch(e) {}
 
+  // Parse structured subtasks (with IDs) if available
+  let subtasks: { id?: string; title: string; steps?: string[]; estimated_minutes?: number; completed?: boolean }[] = [];
+  try {
+    if (params.subtasks) subtasks = JSON.parse(params.subtasks);
+  } catch(e) {}
+
+  // Parse doc links
+  let docLinks: string[] = [];
+  try {
+    if (params.docLinks) docLinks = JSON.parse(params.docLinks);
+  } catch(e) {}
+
+  // Parse draft links
+  let draftLinks: string[] = [];
+  try {
+    if (params.draftLinks) draftLinks = JSON.parse(params.draftLinks);
+  } catch(e) {}
+
   return (
     <FocusPage
       initialTask={{
@@ -31,6 +52,9 @@ export default async function Page({
         block_minutes: Number.isFinite(minutes) ? minutes : 25,
         steps: steps,
       }}
+      subtaskData={subtasks}
+      docLinks={docLinks}
+      draftLinks={draftLinks}
     />
   );
 }
