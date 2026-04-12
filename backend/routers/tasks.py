@@ -10,6 +10,7 @@ Core Mechanics:
 from fastapi import APIRouter, HTTPException, Body
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from services.agent_service import parse_user_task
 from services.google_service import (
@@ -23,7 +24,7 @@ from services.scheduler_service import (
 )
 from services.calendar_sync_service import (
     sync_task_to_calendar, update_task_calendar_event,
-    remove_task_calendar_event,
+    remove_task_calendar_event, rebalance_schedule,
 )
 from models import User, Task, Subtask
 
@@ -66,25 +67,28 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
             pass
 
     # ── 2. Fetch existing calendar events (look a week ahead) ─────────
+    user_tz_str = (user.timezone if user else None) or "America/Chicago"
+    user_tz = ZoneInfo(user_tz_str)
+    now_local = datetime.now(user_tz)  # timezone-aware local time
+    now_local_naive = now_local.replace(tzinfo=None)  # naive for internal comparisons
+
     if has_google:
         try:
             cal_service = get_calendar_service(user.access_token, user.refresh_token)
-            now = datetime.utcnow()
-            look_ahead = now + timedelta(days=7)
-            existing_events = fetch_events(cal_service, now, look_ahead)
+            look_ahead = now_local_naive + timedelta(days=7)
+            existing_events = fetch_events(cal_service, now_local_naive, look_ahead, user_timezone=user_tz_str)
             events_context = format_events_for_context(existing_events)
         except Exception as e:
             print(f"⚠️  Calendar fetch failed: {e}")
 
     # ── 3. Parse with Gemini ──────────────────────────────────────────
     deviation = user.time_deviation_ratio if user else 1.5
-    user_tz = user.timezone if user else "America/Chicago"
     parsed_data = parse_user_task(
         user_input=user_input,
         deviation_ratio=deviation,
-        current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+        current_time=now_local.strftime("%Y-%m-%d %H:%M %Z"),  # local time with tz name
         existing_events=events_context,
-        user_timezone=user_tz,
+        user_timezone=user_tz_str,
     )
 
     # ── 3b. Handle clarification requests from LLM ───────────────────
@@ -158,6 +162,8 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
             estimated_minutes=parsed_data.get("estimated_minutes", 30),
             deadline=deadline,
             is_fixed_deadline=is_fixed_deadline,
+            explicit_start_time=parsed_data.get("explicit_start_time"),
+            start_immediately=parsed_data.get("start_immediately", False),
         )
         await new_task.insert()
         task_id = str(new_task.id)
@@ -181,12 +187,13 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
     except Exception as e:
         print(f"⚠️  DB persistence skipped: {e}")
 
-    # ── 8. Sync parent task to Google Calendar ─────────────────────────
-    calendar_event_id = None
-    if has_google and new_task:
-        calendar_event_id = await sync_task_to_calendar(
-            user, new_task, parsed_data, subtask_docs
-        )
+    # ── 8. Rebalance full schedule (PW-EDF) ───────────────────────────
+    rebalance_result = {"displaced_count": 0, "overflow": [], "warnings": []}
+    if has_google and user:
+        try:
+            rebalance_result = await rebalance_schedule(user, user_tz_str)
+        except Exception as e:
+            print(f"⚠️  Rebalance failed: {e}")
 
     # ── 9. Return full plan with honest estimates ─────────────────────
     return {
@@ -195,8 +202,12 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         "honest_estimate": total_est,
         "estimation_messages": estimation_messages,
         "parsed_plan": parsed_data,
-        "calendar_event_id": calendar_event_id,
         "created_docs": created_docs,
+        "rebalance": {
+            "displaced_count": rebalance_result.get("displaced_count", 0),
+            "overflow": rebalance_result.get("overflow", []),
+            "warnings": rebalance_result.get("warnings", []),
+        },
     }
 
 
@@ -381,3 +392,38 @@ async def list_tasks(email: str):
         return {"tasks": result}
     except Exception as e:
         return {"tasks": [], "error": str(e)}
+
+
+# ─── POST /rebalance — Trigger global PW-EDF rebalance ─────────────────
+
+@router.post("/rebalance")
+async def trigger_rebalance(payload: Dict[str, Any] = Body(...)):
+    """
+    Explicitly trigger a global schedule rebalance for a user.
+    Useful after completing a task or when the frontend needs to force-refresh.
+    """
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email")
+
+    try:
+        user = await _get_user(email)
+    except HTTPException:
+        raise
+
+    user_tz_str = getattr(user, "timezone", None) or "America/Chicago"
+    has_google = bool(user.access_token and user.refresh_token)
+
+    if not has_google:
+        return {"status": "skipped", "reason": "No Google auth"}
+
+    try:
+        result = await rebalance_schedule(user, user_tz_str)
+        return {
+            "status": "success",
+            "displaced_count": result["displaced_count"],
+            "overflow": result["overflow"],
+            "warnings": result["warnings"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

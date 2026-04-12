@@ -41,12 +41,19 @@ def get_docs_service(access_token: str, refresh_token: str):
 
 # ─── Calendar Operations ───────────────────────────────────────────────
 
-def fetch_events(service, time_min: datetime, time_max: datetime) -> List[Dict]:
+def fetch_events(service, time_min: datetime, time_max: datetime, user_timezone: str = "UTC") -> List[Dict]:
     """Fetch all events from Google Calendar in the given time range."""
+    from zoneinfo import ZoneInfo
+    # Ensure time_min and time_max are timezone-aware before formatting
+    tz = ZoneInfo(user_timezone)
+    if time_min.tzinfo is None:
+        time_min = time_min.replace(tzinfo=tz)
+    if time_max.tzinfo is None:
+        time_max = time_max.replace(tzinfo=tz)
     events_result = service.events().list(
         calendarId='primary',
-        timeMin=time_min.isoformat() + 'Z',
-        timeMax=time_max.isoformat() + 'Z',
+        timeMin=time_min.isoformat(),
+        timeMax=time_max.isoformat(),
         singleEvents=True,
         orderBy='startTime'
     ).execute()
@@ -59,15 +66,16 @@ def create_calendar_event(
     start_time: datetime,
     duration_minutes: int,
     description: str = "",
-    color_id: str = None
+    color_id: str = None,
+    timezone: str = "America/Chicago",
 ) -> str:
     """Create a new event and return its ID."""
     end_time = start_time + timedelta(minutes=duration_minutes)
     event = {
         'summary': title,
         'description': description,
-        'start': {'dateTime': start_time.isoformat() + 'Z', 'timeZone': 'UTC'},
-        'end': {'dateTime': end_time.isoformat() + 'Z', 'timeZone': 'UTC'},
+        'start': {'dateTime': start_time.isoformat(), 'timeZone': timezone},
+        'end': {'dateTime': end_time.isoformat(), 'timeZone': timezone},
     }
     if color_id:
         event['colorId'] = color_id
@@ -82,7 +90,8 @@ def update_calendar_event(
     title: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    timezone: str = "America/Chicago",
 ) -> str:
     """Update an existing calendar event. Returns the updated event ID."""
     event = service.events().get(calendarId='primary', eventId=event_id).execute()
@@ -90,9 +99,9 @@ def update_calendar_event(
     if title:
         event['summary'] = title
     if start_time:
-        event['start'] = {'dateTime': start_time.isoformat() + 'Z', 'timeZone': 'UTC'}
+        event['start'] = {'dateTime': start_time.isoformat(), 'timeZone': timezone}
     if end_time:
-        event['end'] = {'dateTime': end_time.isoformat() + 'Z', 'timeZone': 'UTC'}
+        event['end'] = {'dateTime': end_time.isoformat(), 'timeZone': timezone}
     if description:
         event['description'] = description
 
