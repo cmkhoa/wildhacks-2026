@@ -89,7 +89,7 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
 
     # ── 3. Parse with Gemini ──────────────────────────────────────────
     deviation = user.time_deviation_ratio if user else 1.5
-    parsed_data = parse_user_task(
+    parsed_container = parse_user_task(
         user_input=user_input,
         deviation_ratio=deviation,
         current_time=now_local.strftime("%Y-%m-%d %H:%M %Z"),  # local time with tz name
@@ -98,12 +98,24 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         chat_history=chat_history_str,
     )
 
+    reply_text = parsed_container.get("reply", "Got it. Let's start with that.")
+    should_create_task = parsed_container.get("should_create_task", False)
+    parsed_data = parsed_container.get("task")
+
+    if not should_create_task or not parsed_data:
+        return {
+            "status": "success",
+            "reply": reply_text,
+            "should_create_task": False,
+        }
+
     # ── 3b. Handle clarification requests from LLM ───────────────────
     clarification = parsed_data.get("needs_clarification")
     if clarification:
         return {
             "status": "needs_clarification",
             "question": clarification,
+            "reply": reply_text,
             "parsed_plan": parsed_data,
         }
 
@@ -223,6 +235,8 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
     # ── 9. Return full plan with honest estimates ─────────────────────
     return {
         "status": "success",
+        "reply": reply_text,
+        "should_create_task": True,
         "task_id": task_id,
         "honest_estimate": total_est,
         "estimation_messages": estimation_messages,
