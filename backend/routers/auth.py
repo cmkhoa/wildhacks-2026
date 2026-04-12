@@ -80,7 +80,7 @@ async def google_callback(code: str, error: Optional[str] = None):
 
     # 3. Upsert user in MongoDB
     try:
-        user = await User.find_one(User.email == email)
+        user = await User.find_one({"email": email})
         if user:
             user.access_token = access_token
             if refresh_token:  # Google only sends refresh_token on first consent
@@ -107,7 +107,7 @@ async def google_callback(code: str, error: Optional[str] = None):
 async def get_current_user(email: str):
     """Returns the current user's profile from the DB."""
     try:
-        user = await User.find_one(User.email == email)
+        user = await User.find_one({"email": email})
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         return {

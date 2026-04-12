@@ -1,12 +1,15 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 type TaskBlock = {
+  id?: string;
   title: string;
   reward_value: number;
   block_minutes: number;
+  steps?: string[];
 };
 
 type ChatMessage = {
@@ -33,16 +36,22 @@ export function FocusPage({ initialTask }: FocusPageProps) {
   );
   const [chatDraft, setChatDraft] = useState('');
 
+  const router = useRouter();
+
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     { role: 'assistant', text: 'You are in focus mode. Keep only this block visible.' },
   ]);
 
-  const [subtasks, setSubtasks] = useState<SubtaskItem[]>([
-    { id: 'open-doc', text: 'Open the essay document', checked: false },
-    { id: 'skim-notes', text: 'Skim notes and highlight three useful points', checked: false },
-    { id: 'write-outline', text: 'Write the rough intro and three section bullets', checked: false },
-    { id: 'mark-question', text: 'Mark one confusing part to ask about later', checked: false },
-  ]);
+  const [subtasks, setSubtasks] = useState<SubtaskItem[]>(
+    initialTask.steps && initialTask.steps.length > 0 
+      ? initialTask.steps.map((st, i) => ({ id: `step-${i}`, text: st, checked: false }))
+      : [
+          { id: 'open-doc', text: 'Open the essay document', checked: false },
+          { id: 'skim-notes', text: 'Skim notes and highlight three useful points', checked: false },
+          { id: 'write-outline', text: 'Write the rough intro and three section bullets', checked: false },
+          { id: 'mark-question', text: 'Mark one confusing part to ask about later', checked: false },
+        ]
+  );
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -79,8 +88,31 @@ export function FocusPage({ initialTask }: FocusPageProps) {
 
   const handlePause = () => setIsTimerRunning(false);
 
-  const handleDone = () => {
+  const handleDone = async () => {
     setIsTimerRunning(false);
+    
+    if (initialTask.id) {
+      try {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+        let email: string | null = null;
+        if (typeof window !== 'undefined') {
+          email = localStorage.getItem('userEmail');
+        }
+        
+        await fetch(`${backendUrl}/api/tasks/subtask/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            subtask_id: initialTask.id,
+            email: email || undefined
+          })
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    
+    router.push('/dashboard');
   };
 
   const toggleSubtask = (id: string) => {

@@ -32,7 +32,7 @@ async def check_off_subtask(subtask_id: str, email: str = ""):
     user = None
 
     if email:
-        user = await User.find_one(User.email == email)
+        user = await User.find_one({"email": email})
 
     if user:
         user.reward_points += points_earned
@@ -67,7 +67,7 @@ async def use_grace_pass(email: str = ""):
     if not email:
         raise HTTPException(status_code=400, detail="Email required")
 
-    user = await User.find_one(User.email == email)
+    user = await User.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -91,7 +91,7 @@ async def get_user_rewards(email: str = ""):
         return {"reward_points": 0, "grace_passes": 0, "time_deviation_ratio": 1.5}
 
     try:
-        user = await User.find_one(User.email == email)
+        user = await User.find_one({"email": email})
         if not user:
             return {"reward_points": 0, "grace_passes": 0, "time_deviation_ratio": 1.5}
 

@@ -1,12 +1,24 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+type SubtaskInfo = {
+  id?: string;
+  title: string;
+  estimated_minutes: number;
+  reward_value: number;
+  steps?: string[];
+  completed?: boolean;
+};
 
 type TaskBlock = {
+  id?: string;
   title: string;
   reward_value: number;
   block_minutes: number;
+  steps?: string[];
+  subtasks?: SubtaskInfo[];
 };
 
 type ChatMessage = {
@@ -17,34 +29,105 @@ type ChatMessage = {
 type ParsedSubtask = {
   title?: string;
   reward_value?: number;
+  steps?: string[];
 };
 
 export default function Home() {
   const [taskInput, setTaskInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedTaskIndex, setSelectedTaskIndex] = useState(0);
-  const gemsEarned = 4;
-  const username = 'Haiha';
+  const [gemsEarned, setGemsEarned] = useState(0);
+  const [email, setEmail] = useState<string | null>(null);
+  
+  const username = email ? email.split('@')[0] : 'Haiha';
   const router = useRouter();
 
-  const [activeTask, setActiveTask] = useState<TaskBlock | null>({
-    title: 'Outline history essay',
-    reward_value: 10,
-    block_minutes: 40,
-  });
-
-  const [queuedTasks, setQueuedTasks] = useState<TaskBlock[]>([
-    { title: 'Reply to two important emails', reward_value: 5, block_minutes: 20 },
-    { title: 'Review chapter 4', reward_value: 15, block_minutes: 30 },
-  ]);
-
-  const completedTasks: TaskBlock[] = [
-    { title: 'Open planner', reward_value: 5, block_minutes: 10 },
-  ];
+  const [activeTask, setActiveTask] = useState<TaskBlock | null>(null);
+  const [queuedTasks, setQueuedTasks] = useState<TaskBlock[]>([]);
+  const [completedTasks, setCompletedTasks] = useState<TaskBlock[]>([]);
 
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     { role: 'assistant', text: 'Keep the next move small enough to start.' },
   ]);
+
+  const fetchTasks = async (userEmail: string) => {
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      const res = await fetch(`${backendUrl}/api/tasks?email=${encodeURIComponent(userEmail)}`);
+      const data = await res.json();
+      
+      if (data.tasks) {
+        const allCompleted: TaskBlock[] = [];
+        const allPending: TaskBlock[] = [];
+        let gems = 0;
+        
+        data.tasks.forEach((task: any) => {
+          const subtasks: SubtaskInfo[] = (task.subtasks || []).map((st: any) => ({
+            id: st.id,
+            title: st.title,
+            estimated_minutes: st.estimated_minutes || 15,
+            reward_value: st.reward_value || 10,
+            steps: st.steps || [],
+            completed: st.completed,
+          }));
+
+          const completedSubs = subtasks.filter(s => s.completed);
+          const pendingSubs = subtasks.filter(s => !s.completed);
+          const allSubsDone = subtasks.length > 0 && pendingSubs.length === 0;
+
+          // Aggregate totals at the parent task level
+          const totalMinutes = subtasks.reduce((sum, s) => sum + s.estimated_minutes, 0) || task.estimated_minutes || 25;
+          const totalReward = subtasks.reduce((sum, s) => sum + s.reward_value, 0) || 10;
+
+          const tBlock: TaskBlock = {
+            id: task.id,
+            title: task.title,
+            reward_value: totalReward,
+            block_minutes: totalMinutes,
+            // Pass subtask titles as steps so focus page can show them
+            steps: subtasks.map(s => s.title),
+            subtasks,
+          };
+
+          if (allSubsDone) {
+            allCompleted.push(tBlock);
+            gems += totalReward;
+          } else {
+            allPending.push(tBlock);
+            gems += completedSubs.reduce((sum, s) => sum + s.reward_value, 0);
+          }
+        });
+        
+        setCompletedTasks(allCompleted);
+        setGemsEarned(gems);
+        
+        if (allPending.length > 0) {
+          setActiveTask(allPending[0]);
+          setQueuedTasks(allPending.slice(1));
+        } else {
+          setActiveTask(null);
+          setQueuedTasks([]);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    const urlEmail = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('email') : null;
+    let finalEmail = urlEmail;
+    if (urlEmail) {
+      localStorage.setItem('userEmail', urlEmail);
+    } else {
+      finalEmail = localStorage.getItem('userEmail');
+    }
+    
+    if (finalEmail) {
+      setEmail(finalEmail);
+      fetchTasks(finalEmail);
+    }
+  }, []);
 
   const dailyTasks = activeTask ? [activeTask, ...queuedTasks] : queuedTasks;
   const selectedTask = dailyTasks[selectedTaskIndex] ?? dailyTasks[0] ?? null;
@@ -57,6 +140,12 @@ export default function Home() {
       reward: String(selectedTask.reward_value),
       minutes: String(selectedTask.block_minutes),
     });
+    
+    if (selectedTask.id) params.append('id', selectedTask.id);
+    if (selectedTask.steps && selectedTask.steps.length > 0) {
+      params.append('steps', JSON.stringify(selectedTask.steps));
+    }
+    
     router.push(`/focus?${params.toString()}`);
   };
 
@@ -71,7 +160,7 @@ export default function Home() {
       const res = await fetch(`${backendUrl}/api/tasks/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_input: inputStr }),
+        body: JSON.stringify({ user_input: inputStr, email: email || 'anonymous' }),
       });
       const data = await res.json();
 
@@ -79,15 +168,6 @@ export default function Home() {
         const tasks = data.parsed_plan?.subtasks || [];
 
         if (tasks.length > 0) {
-          const formattedTasks: TaskBlock[] = tasks.map((st: ParsedSubtask) => ({
-            title: st.title || 'Untitled task',
-            reward_value: st.reward_value || 10,
-            block_minutes: Math.max(
-              5,
-              Math.floor((data.parsed_plan.schedule_minutes || 60) / tasks.length),
-            ),
-          }));
-
           setChatHistory((previous) => [
             ...previous,
             {
@@ -96,19 +176,49 @@ export default function Home() {
             },
           ]);
 
-          if (!activeTask) {
-            setActiveTask(formattedTasks[0]);
-            setQueuedTasks((previous) => [...previous, ...formattedTasks.slice(1)]);
-            setSelectedTaskIndex(0);
-          } else {
-            setQueuedTasks((previous) => [...previous, ...formattedTasks]);
+          // Try to refresh from backend DB to get persisted IDs
+          let fetchedFromDb = false;
+          if (email) {
+            await fetchTasks(email);
+            // fetchTasks sets activeTask/queuedTasks — check if it found anything
+            // We can't read state synchronously here, so we use the response data as fallback below
           }
+
+          // Populate task list directly from the response in case DB is unavailable
+          // Group all subtasks under one parent task
+          const parentTitle = data.parsed_plan?.title || inputStr;
+          const subtaskInfos: SubtaskInfo[] = tasks.map((st: any, i: number) => ({
+            id: st.id || undefined,
+            title: st.title || `Step ${i + 1}`,
+            estimated_minutes: st.adjusted_minutes || st.estimated_minutes || 15,
+            reward_value: st.reward_value || Math.max(5, Math.floor((st.estimated_minutes || 15) / 3)),
+            steps: st.steps || [],
+          }));
+
+          const parentTask: TaskBlock = {
+            id: data.task_id || undefined,
+            title: parentTitle,
+            reward_value: subtaskInfos.reduce((sum, s) => sum + s.reward_value, 0),
+            block_minutes: subtaskInfos.reduce((sum, s) => sum + s.estimated_minutes, 0),
+            steps: subtaskInfos.map(s => s.title),
+            subtasks: subtaskInfos,
+          };
+
+          // Set task from response (this ensures it shows even without DB)
+          setActiveTask((current) => current ?? parentTask);
+          setQueuedTasks((current) => current.length > 0 ? current : []);
         } else {
           setChatHistory((previous) => [
             ...previous,
             { role: 'assistant', text: "I organized that, but couldn't pull out specific steps." },
           ]);
         }
+      } else if (data.status === 'needs_clarification') {
+        // LLM needs more info before creating the task
+        setChatHistory((previous) => [
+          ...previous,
+          { role: 'assistant', text: data.question || 'Can you tell me more about this task?' },
+        ]);
       } else {
         setChatHistory((previous) => [
           ...previous,

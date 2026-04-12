@@ -6,6 +6,15 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load environment variables from .env file
 
+# Fix dnspython on macOS: it can't read /etc/resolv.conf (permission denied),
+# which breaks mongodb+srv:// SRV lookups. Use Google's public DNS instead.
+try:
+    import dns.resolver
+    dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+    dns.resolver.default_resolver.nameservers = ["8.8.8.8", "8.8.4.4"]
+except Exception:
+    pass
+
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from models import User, Task, Subtask
