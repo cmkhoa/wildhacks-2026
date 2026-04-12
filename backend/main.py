@@ -57,7 +57,7 @@ def health_check():
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to Chronos API for ADHD Calendar"}
+    return {"message": "Welcome to Unstuck API for ADHD Calendar"}
 
 if __name__ == "__main__":
     import uvicorn

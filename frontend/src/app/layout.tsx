@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Chronos",
+  title: "Unstuck",
   description: "ADHD-friendly planning calendar",
 };
 

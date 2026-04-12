@@ -39,7 +39,7 @@ def _build_event_description(subtasks: List[Dict], task_prompt: str = "") -> str
             lines.append(f"      • {step}")
 
     lines.append("")
-    lines.append("— Managed by Timi 🧠")
+    lines.append("— Managed by Unstuck 🧠")
     return "\n".join(lines)
 
 
@@ -419,7 +419,7 @@ async def rebalance_schedule(user, user_tz_str: str) -> dict:
                 )
             else:
                 duration_min = int((new_end - new_start).total_seconds() / 60)
-                subtask_desc = f"📝 {task.original_prompt}\n— Managed by Timi 🧠"
+                subtask_desc = f"📝 {task.original_prompt}\n— Managed by Unstuck 🧠"
                 event_id = create_calendar_event(
                     cal_service,
                     title=f"📋 {task.title}",

@@ -6,7 +6,7 @@ import re
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-CHAT_SYSTEM_PROMPT = """You are Chronos, a warm ADHD-friendly planning coach.
+CHAT_SYSTEM_PROMPT = """You are Unstuck, a warm ADHD-friendly planning coach.
 
 Your job is to answer like a helpful conversational assistant, not like a JSON task parser.
 Be concise, specific, calm, and practical. Use short paragraphs or bullets only when useful.
