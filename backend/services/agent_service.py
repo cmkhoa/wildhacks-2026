@@ -39,34 +39,42 @@ Chat History Context (if any):
 
 Return ONLY a valid JSON object (no markdown, no code fences) with this exact schema:
 {{
-  "title": "Short title of the overall task",
-  "estimated_minutes": 120,
-  "priority": "high",
-  "deadline": "2026-04-15T17:00:00" or null,
-  "is_fixed_deadline": true,
-  "explicit_start_time": "05:00" or null,
-  "start_immediately": false,
-  "preferred_time": "morning" or "afternoon" or "evening" or null,
-  "needs_clarification": null,
-  "subtasks": [
-    {{
-      "title": "Subtask name",
-      "estimated_minutes": 30,
-      "steps": [
-        "Step 1: Specific concrete action",
-        "Step 2: Next concrete action",
-        "Step 3: Final action for this subtask"
-      ],
-      "needs_doc": true,
-      "doc_title": "Document title if a starter doc would help",
-      "doc_outline": "## Intro\\n- Key point 1\\n- Key point 2\\n\\n## Section 1\\n...",
-      "needs_email": true,
-      "email_subject": "Draft email subject",
-      "email_body": "Draft email body",
-      "email_recipient": "recipient@example.com"
-    }}
-  ]
+  "reply": "Your natural, warm, ADHD-coach-style conversational reply shown to the user. Answer questions, offer support, or ask for clarification here.",
+  "should_create_task": true,
+  "task": {{
+    "title": "Short title of the overall task",
+    "estimated_minutes": 120,
+    "priority": "high",
+    "deadline": "2026-04-15T17:00:00" or null,
+    "is_fixed_deadline": true,
+    "explicit_start_time": "05:00" or null,
+    "start_immediately": false,
+    "preferred_time": "morning" or "afternoon" or "evening" or null,
+    "needs_clarification": null,
+    "subtasks": [
+      {{
+        "title": "Subtask name",
+        "estimated_minutes": 30,
+        "steps": [
+          "Step 1: Specific concrete action",
+          "Step 2: Next concrete action",
+          "Step 3: Final action for this subtask"
+        ],
+        "needs_doc": true,
+        "doc_title": "Document title if a starter doc would help",
+        "doc_outline": "## Intro\\n- Key point 1\\n- Key point 2\\n\\n## Section 1\\n...",
+        "needs_email": true,
+        "email_subject": "Draft email subject",
+        "email_body": "Draft email body",
+        "email_recipient": "recipient@example.com"
+      }}
+    ]
+  }}
 }}
+
+RULES FOR is_task:
+- Set should_create_task to true ONLY when they ask to schedule, plan, breakdown, or add a task, OR describe a concrete task needing doing.
+- Set should_create_task to false for normal questions, emotional support, explanations, greetings, or follow-up conversation. If false, "task" should be null.
 
 SCHEDULING RULES:
 - "deadline": ONLY set this when the user says the task must be FINISHED/SUBMITTED/DUE by a 
@@ -144,21 +152,25 @@ def parse_user_task(user_input: str, deviation_ratio: float = 1.5,
         print(f"⚠️  Gemini parse error: {e}")
         # Fallback for offline/demo mode
         return {
-            "title": "Parsed Task",
-            "estimated_minutes": 30,
-            "priority": "medium",
-            "deadline": None,
-            "is_fixed_deadline": False,
-            "preferred_time": None,
-            "needs_clarification": None,
-            "subtasks": [{
-                "title": "Review task requirements",
-                "estimated_minutes": 15,
-                "steps": ["Read through the task description", "Identify key deliverables", "List questions"],
-                "needs_doc": False,
-                "doc_title": "",
-                "doc_outline": ""
-            }]
+            "reply": "I've created a baseline task for you.",
+            "should_create_task": True,
+            "task": {
+                "title": "Parsed Task",
+                "estimated_minutes": 30,
+                "priority": "medium",
+                "deadline": None,
+                "is_fixed_deadline": False,
+                "preferred_time": None,
+                "needs_clarification": None,
+                "subtasks": [{
+                    "title": "Review task requirements",
+                    "estimated_minutes": 15,
+                    "steps": ["Read through the task description", "Identify key deliverables", "List questions"],
+                    "needs_doc": False,
+                    "doc_title": "",
+                    "doc_outline": ""
+                }]
+            }
         }
 
 

@@ -311,33 +311,6 @@ export default function Home() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
-      const chatRes = await fetch(`${backendUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: inputStr,
-          email: email || 'anonymous',
-          chat_history: chatHistory,
-        }),
-      });
-      const chatData = await chatRes.json();
-
-      if (!chatRes.ok || chatData.status !== 'success') {
-        throw new Error(chatData.detail || 'Chat request failed');
-      }
-
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        text: chatData.reply || 'I’m here. What would help most right now?',
-      };
-      setChatHistory((previous) => [...previous, assistantMessage]);
-
-      if (!chatData.should_create_task) {
-        setIsLoading(false);
-        setTaskInput('');
-        return;
-      }
-
       const res = await fetch(`${backendUrl}/api/tasks/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -349,19 +322,23 @@ export default function Home() {
       });
       const data = await res.json();
 
-      if (data.status === 'success') {
+      if (data.status === 'success' || data.status === 'needs_clarification') {
+        const assistantMessage: ChatMessage = {
+          role: 'assistant',
+          text: data.reply || data.question || 'I’m here. What would help most right now?',
+        };
+        setChatHistory((previous) => [...previous, assistantMessage]);
+
+        if (data.status === 'needs_clarification' || !data.should_create_task) {
+          setIsLoading(false);
+          setTaskInput('');
+          return;
+        }
+
         const tasks = data.parsed_plan?.subtasks || [];
 
         if (tasks.length > 0) {
-          setChatHistory((previous) => [
-            ...previous,
-            {
-              role: 'assistant',
-              text: `I also added ${tasks.length} small step${tasks.length === 1 ? '' : 's'} to your task queue.`,
-            },
-          ]);
-
-          // Try to refresh from backend DB to get persisted IDs
+          // Attempting to refresh tasks...
           let fetchedFromDb = false;
           if (email) {
             await fetchTasks(email);
@@ -400,12 +377,6 @@ export default function Home() {
             { role: 'assistant', text: "I organized that, but couldn't pull out specific steps." },
           ]);
         }
-      } else if (data.status === 'needs_clarification') {
-        // LLM needs more info before creating the task
-        setChatHistory((previous) => [
-          ...previous,
-          { role: 'assistant', text: data.question || 'Can you tell me more about this task?' },
-        ]);
       } else {
         setChatHistory((previous) => [
           ...previous,
