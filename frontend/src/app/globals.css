@@ -56,6 +56,39 @@ input {
   animation: gem-glow 3200ms ease-in-out infinite;
 }
 
+.login-card-float {
+  animation: login-card-float 5600ms ease-in-out infinite;
+}
+
+.login-card-shine {
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    transparent 35%,
+    rgba(255, 255, 255, 0.58) 48%,
+    transparent 62%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: login-card-shine 6200ms ease-in-out infinite;
+}
+
+.login-orbit {
+  animation: login-orbit 18000ms linear infinite;
+}
+
+.login-floating-gem {
+  animation: login-float-a 3800ms ease-in-out infinite;
+}
+
+.login-floating-gem-slow {
+  animation: login-float-b 5200ms ease-in-out infinite;
+}
+
+.login-floating-dot {
+  animation: login-float-c 4400ms ease-in-out infinite;
+}
+
 .confetti {
   position: absolute;
   top: 18%;
@@ -168,6 +201,68 @@ input {
   }
   50% {
     box-shadow: 0 10px 28px rgba(47, 143, 131, 0.13);
+  }
+}
+
+@keyframes login-card-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes login-card-shine {
+  0%,
+  64% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes login-orbit {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.04);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes login-float-a {
+  0%,
+  100% {
+    transform: translateY(0) rotate(45deg);
+  }
+  50% {
+    transform: translateY(-12px) rotate(58deg);
+  }
+}
+
+@keyframes login-float-b {
+  0%,
+  100% {
+    transform: translateY(0) rotate(45deg);
+  }
+  50% {
+    transform: translateY(10px) rotate(30deg);
+  }
+}
+
+@keyframes login-float-c {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(12px, -8px);
   }
 }
 
