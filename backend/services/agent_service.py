@@ -1,9 +1,28 @@
 from google import genai
 import os
 import json
+import re
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+CHAT_SYSTEM_PROMPT = """You are Chronos, a warm ADHD-friendly planning coach.
+
+Your job is to answer like a helpful conversational assistant, not like a JSON task parser.
+Be concise, specific, calm, and practical. Use short paragraphs or bullets only when useful.
+Help the user feel less stuck and more able to take the next tiny action.
+
+Decide whether the user's latest message should also become a scheduled task:
+- true when they ask to plan, schedule, add, break down, start, or organize a concrete task
+- true when they describe a task they need to do, especially with a due date or time
+- false for normal questions, emotional support, explanations, greetings, or follow-up conversation
+
+Return ONLY valid JSON with this exact schema:
+{
+  "reply": "Natural coach-style answer shown to the user.",
+  "should_create_task": false
+}
+"""
 
 PROMPT_TEMPLATE = """You are an executive functioning AI assistant for someone with ADHD.
 They need help breaking down the following task into actionable, non-overwhelming subtasks 
@@ -45,9 +64,9 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this exact sc
       "email_subject": "Draft email subject",
       "email_body": "Draft email body",
       "email_recipient": "recipient@example.com"
-    }
+    }}
   ]
-}
+}}
 
 SCHEDULING RULES:
 - "deadline": ONLY set this when the user says the task must be FINISHED/SUBMITTED/DUE by a 
@@ -140,5 +159,132 @@ def parse_user_task(user_input: str, deviation_ratio: float = 1.5,
                 "doc_title": "",
                 "doc_outline": ""
             }]
+        }
+
+
+def looks_like_task_request(message: str) -> bool:
+    lower_message = message.lower()
+    task_phrases = [
+        "i need to", "need to", "i have to", "have to", "due", "deadline",
+        "schedule", "plan", "add", "break down", "finish", "write", "study",
+        "email", "clean", "review", "prepare", "complete", "work on", "draft",
+        "assignment", "homework", "project"
+    ]
+    return any(phrase in lower_message for phrase in task_phrases)
+
+
+def basic_chat_fallback(message: str, error: Exception | None = None) -> str:
+    """Small local fallback for when Gemini is unavailable or quota-limited."""
+    normalized = message.lower().strip()
+    quota_limited = error and (
+        "RESOURCE_EXHAUSTED" in str(error) or "quota" in str(error).lower()
+    )
+    prefix = (
+        "Gemini is temporarily out of free-tier requests, so I’m in basic mode. "
+        if quota_limited
+        else ""
+    )
+
+    addition_match = re.search(r"(-?\d+(?:\.\d+)?)\s*\+\s*(-?\d+(?:\.\d+)?)", normalized)
+    if addition_match:
+        left = float(addition_match.group(1))
+        right = float(addition_match.group(2))
+        total = left + right
+        display_total = int(total) if total.is_integer() else total
+        return f"{prefix}The answer is {display_total}."
+
+    if "a + b" in normalized and ("square" in normalized or "squared" in normalized):
+        return f"{prefix}The formula for (a + b) squared is a^2 + 2ab + b^2."
+
+    if "numerator" in normalized:
+        return (
+            f"{prefix}A numerator is the top number in a fraction. "
+            "In 3/4, the numerator is 3. It tells you how many parts you have."
+        )
+
+    if "denominator" in normalized:
+        return (
+            f"{prefix}A denominator is the bottom number in a fraction. "
+            "In 3/4, the denominator is 4. It tells you how many equal parts make the whole."
+        )
+
+    if "should i leave" in normalized and ("homework" in normalized or "hw" in normalized):
+        return (
+            f"{prefix}If the homework is due soon, don’t abandon it completely. "
+            "Do the smallest useful version: one problem, one example, or five focused minutes. "
+            "If you’re exhausted, take a short break first and come back with a tiny target."
+        )
+
+    if "what" == normalized or normalized in {"what?", "huh", "huh?"}:
+        return f"{prefix}I may have missed the context. Ask me the question one more time, and I’ll answer directly."
+
+    if looks_like_task_request(message):
+        return (
+            f"{prefix}I can still help you plan this. "
+            "Tell me the task, the deadline, and how much energy you have, and I’ll keep the next step tiny."
+        )
+
+    return (
+        f"{prefix}I’m here, but I may not have enough context yet. "
+        "Ask me directly, or tell me what feels confusing, and I’ll keep the answer short."
+    )
+
+
+def chat_with_coach(message: str, chat_history: list | None = None) -> dict:
+    """Return a natural assistant reply plus whether this should become a task."""
+    formatted_history = "No prior messages."
+    if chat_history:
+        formatted_history = "\n".join(
+            f"{msg.get('role', 'unknown')}: {msg.get('text', '')}"
+            for msg in chat_history[-12:]
+            if isinstance(msg, dict)
+        )
+
+    prompt = (
+        f"{CHAT_SYSTEM_PROMPT}\n\n"
+        f"Conversation so far:\n{formatted_history}\n\n"
+        f"Latest user message:\n{message}"
+    )
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite',
+            contents=prompt
+        )
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.startswith("```"):
+            raw_text = raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+
+        cleaned_text = raw_text.strip()
+        try:
+            data = json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            start = cleaned_text.find("{")
+            end = cleaned_text.rfind("}")
+            if start >= 0 and end > start:
+                data = json.loads(cleaned_text[start:end + 1])
+            else:
+                return {
+                    "reply": cleaned_text,
+                    "should_create_task": looks_like_task_request(message),
+                }
+
+        reply = str(data.get("reply", "")).strip()
+        if not reply:
+            reply = "I’m here. Tell me what feels hardest right now, and we’ll shrink it."
+
+        return {
+            "reply": reply,
+            "should_create_task": bool(data.get("should_create_task", False)) and looks_like_task_request(message),
+        }
+    except Exception as e:
+        print(f"⚠️  Gemini chat error: {e}")
+        return {
+            "reply": basic_chat_fallback(message, e),
+            "should_create_task": looks_like_task_request(message),
         }
 
