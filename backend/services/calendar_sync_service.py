@@ -7,6 +7,7 @@ Updates event descriptions as subtasks are completed.
 """
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple
+from zoneinfo import ZoneInfo
 
 from services.google_service import (
     get_calendar_service, fetch_events, create_calendar_event,
@@ -135,14 +136,21 @@ async def sync_task_to_calendar(
     try:
         cal_service = get_calendar_service(user.access_token, user.refresh_token)
 
-        # Fetch existing events to find free times
-        now = datetime.utcnow()
-        look_ahead_end = now + timedelta(days=7)  # Look a week ahead
-        existing_events = fetch_events(cal_service, now, look_ahead_end)
-        free_slots = get_free_slots(existing_events, now, look_ahead_end)
+        # Use the user's local timezone for all scheduling
+        user_tz_str = getattr(user, 'timezone', None) or "America/Chicago"
+        user_tz = ZoneInfo(user_tz_str)
 
-        # Apply time preference filter
-        preferred_time = parsed_data.get("preferred_time")
+        # "now" in the user's local timezone (naive for internal comparisons)
+        now = datetime.now(user_tz).replace(tzinfo=None)
+        look_ahead_end = now + timedelta(days=7)  # Look a week ahead
+        existing_events = fetch_events(cal_service, now, look_ahead_end, user_timezone=user_tz_str)
+        free_slots = get_free_slots(existing_events, now, look_ahead_end, user_timezone=user_tz_str)
+
+        start_immediately = parsed_data.get("start_immediately", False)
+        explicit_start_time = parsed_data.get("explicit_start_time")  # e.g. "05:00"
+
+        # Apply time preference filter (skipped for start_immediately)
+        preferred_time = None if start_immediately else parsed_data.get("preferred_time")
         filtered_slots = _filter_slots_by_preference(free_slots, preferred_time)
 
         duration = task.estimated_minutes or 30
@@ -150,19 +158,58 @@ async def sync_task_to_calendar(
         scheduled_start = None
         scheduled_end = None
 
-        # ── Schedule based on deadline type ───────────────────────────
-        if deadline and task.is_fixed_deadline:
+        # ── Schedule based on how the user expressed timing ────────────
+        if start_immediately:
+            # User said "now" — anchor to current local time, no preference filter
+            result = _find_slot_for_duration(free_slots, duration)
+            if result:
+                scheduled_start, scheduled_end = result
+
+        elif explicit_start_time:
+            # User said "do it at 5am" — find slot AT that time, not before it
+            try:
+                target_hour, target_minute = map(int, explicit_start_time.split(":"))
+                target_dt = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+                if target_dt < now:
+                    target_dt += timedelta(days=1)  # push to next occurrence
+                # Find the first free slot containing the target start time
+                for slot_start, slot_end in free_slots:
+                    if slot_start <= target_dt and slot_end >= target_dt + timedelta(minutes=duration):
+                        scheduled_start = target_dt
+                        scheduled_end = target_dt + timedelta(minutes=duration)
+                        break
+                # Fallback: first slot on or after target time
+                if not scheduled_start:
+                    for slot_start, slot_end in free_slots:
+                        if slot_end >= target_dt + timedelta(minutes=duration):
+                            scheduled_start = max(slot_start, target_dt)
+                            scheduled_end = scheduled_start + timedelta(minutes=duration)
+                            break
+            except (ValueError, AttributeError):
+                pass
+
+        elif deadline and task.is_fixed_deadline:
             # Fixed deadline: schedule working backwards from deadline
             result = _find_slot_before_deadline(filtered_slots, duration, deadline)
             if result:
                 scheduled_start, scheduled_end = result
             else:
-                # Fallback: try all slots (ignore preference)
                 result = _find_slot_before_deadline(free_slots, duration, deadline)
                 if result:
                     scheduled_start, scheduled_end = result
+
+        elif deadline and not task.is_fixed_deadline:
+            # Soft deadline: find earliest slot
+            result = _find_slot_for_duration(filtered_slots, duration)
+            if result:
+                scheduled_start, scheduled_end = result
+            else:
+                result = _find_slot_for_duration(free_slots, duration)
+                if result:
+                    scheduled_start, scheduled_end = result
+
         else:
-            # Flexible: find earliest available slot
+            # No deadline, no explicit time: find earliest slot matching preference
             result = _find_slot_for_duration(filtered_slots, duration)
             if result:
                 scheduled_start, scheduled_end = result
@@ -195,6 +242,7 @@ async def sync_task_to_calendar(
                 start_time=scheduled_start,
                 end_time=scheduled_end,
                 description=description,
+                timezone=user_tz_str,
             )
         else:
             # Create new event
@@ -205,6 +253,7 @@ async def sync_task_to_calendar(
                 duration_minutes=duration,
                 description=description,
                 color_id=color_id,
+                timezone=user_tz_str,
             )
 
         # ── Update task with calendar info ────────────────────────────

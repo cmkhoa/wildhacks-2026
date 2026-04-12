@@ -22,6 +22,8 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this exact sc
   "priority": "high",
   "deadline": "2026-04-15T17:00:00" or null,
   "is_fixed_deadline": true,
+  "explicit_start_time": "05:00" or null,
+  "start_immediately": false,
   "preferred_time": "morning" or "afternoon" or "evening" or null,
   "needs_clarification": null,
   "subtasks": [
@@ -41,13 +43,19 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this exact sc
 }}
 
 SCHEDULING RULES:
-- "deadline": Extract any mentioned deadline as an ISO datetime string. Convert relative dates 
-  like "Friday", "next week", "tomorrow" into actual ISO datetimes using the current date/time.
-  Set to null if no deadline is mentioned.
-- "is_fixed_deadline": true if the user mentions a hard deadline ("due Friday", "submit by 5pm", 
-  "exam on Monday"). false if it's flexible ("sometime this week", "when I get a chance") or no deadline.
-- "preferred_time": Extract time-of-day preferences if mentioned ("morning", "afternoon", "evening").
-  Set to null if not mentioned.
+- "deadline": ONLY set this when the user says the task must be FINISHED/SUBMITTED/DUE by a 
+  certain time (e.g. "assignment due Friday", "submit by 5pm", "exam on Monday").
+  Do NOT set deadline when the user says when they WANT TO START or DO the task.
+  Set to null if no due date is mentioned.
+- "is_fixed_deadline": true only when deadline is set AND it is a hard cutoff.
+- "explicit_start_time": Set this (as "HH:MM" in 24h format) when the user says they want to 
+  START or DO the task at a specific time (e.g. "do it at 5am", "work on it at 2pm", 
+  "schedule for 9am"). This is the START time, not a deadline. Set to null otherwise.
+- "start_immediately": Set to true when the user says "now", "right now", "immediately", 
+  "asap", or implies they want to start without delay. Set to false otherwise.
+  When true, preferred_time should be null (ignore time-of-day preference).
+- "preferred_time": Extract time-of-day preferences ONLY if no explicit_start_time or 
+  start_immediately is set (e.g. "morning", "afternoon", "evening"). Set to null otherwise.
 - "needs_clarification": If the task is ambiguous and you need critical scheduling information to 
   proceed (e.g. the user says "finish the project" but you don't know what project or when), 
   set this to a SHORT follow-up question string (e.g. "When is this due? And what does 'finish' mean for this project?").
@@ -86,6 +94,12 @@ def parse_user_task(user_input: str, deviation_ratio: float = 1.5,
         )
 
         raw_text = response.text.strip()
+        print(f"\n==================================================")
+        print(f"🤖 Gemini Raw Response:")
+        print(f"==================================================")
+        print(raw_text)
+        print(f"==================================================\n")
+
         # Strip markdown code fences if present
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]

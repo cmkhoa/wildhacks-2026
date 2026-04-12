@@ -10,6 +10,7 @@ Core Mechanics:
 from fastapi import APIRouter, HTTPException, Body
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from services.agent_service import parse_user_task
 from services.google_service import (
@@ -66,25 +67,28 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
             pass
 
     # ── 2. Fetch existing calendar events (look a week ahead) ─────────
+    user_tz_str = (user.timezone if user else None) or "America/Chicago"
+    user_tz = ZoneInfo(user_tz_str)
+    now_local = datetime.now(user_tz)  # timezone-aware local time
+    now_local_naive = now_local.replace(tzinfo=None)  # naive for internal comparisons
+
     if has_google:
         try:
             cal_service = get_calendar_service(user.access_token, user.refresh_token)
-            now = datetime.utcnow()
-            look_ahead = now + timedelta(days=7)
-            existing_events = fetch_events(cal_service, now, look_ahead)
+            look_ahead = now_local_naive + timedelta(days=7)
+            existing_events = fetch_events(cal_service, now_local_naive, look_ahead, user_timezone=user_tz_str)
             events_context = format_events_for_context(existing_events)
         except Exception as e:
             print(f"⚠️  Calendar fetch failed: {e}")
 
     # ── 3. Parse with Gemini ──────────────────────────────────────────
     deviation = user.time_deviation_ratio if user else 1.5
-    user_tz = user.timezone if user else "America/Chicago"
     parsed_data = parse_user_task(
         user_input=user_input,
         deviation_ratio=deviation,
-        current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+        current_time=now_local.strftime("%Y-%m-%d %H:%M %Z"),  # local time with tz name
         existing_events=events_context,
-        user_timezone=user_tz,
+        user_timezone=user_tz_str,
     )
 
     # ── 3b. Handle clarification requests from LLM ───────────────────

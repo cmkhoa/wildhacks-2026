@@ -87,11 +87,16 @@ def get_free_slots(
     events: List[Dict],
     day_start: datetime,
     day_end: datetime,
+    user_timezone: str = "America/Chicago",
 ) -> List[Tuple[datetime, datetime]]:
     """
     Given Google Calendar events and a day boundary,
     returns (start, end) free slot tuples.
+    All datetimes are normalized to the user's local timezone.
     """
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(user_timezone)
+
     busy = []
     for ev in events:
         start_raw = ev.get("start", {}).get("dateTime") or ev.get("start", {}).get("date")
@@ -99,8 +104,9 @@ def get_free_slots(
         if not start_raw or not end_raw:
             continue
         try:
-            start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).replace(tzinfo=None)
-            end = datetime.fromisoformat(end_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+            # Convert to user's local timezone (strip tzinfo to keep naive-comparable)
+            start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(tz).replace(tzinfo=None)
+            end = datetime.fromisoformat(end_raw.replace("Z", "+00:00")).astimezone(tz).replace(tzinfo=None)
             busy.append((start, end))
         except (ValueError, TypeError):
             continue
