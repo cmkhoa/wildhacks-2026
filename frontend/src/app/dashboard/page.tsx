@@ -127,10 +127,6 @@ export default function Home() {
     setTaskInput('');
   };
 
-  const handleQuickAction = (actionText: string) => {
-    executeSchedule(actionText);
-  };
-
   return (
     <main className="h-screen w-full overflow-hidden bg-[#FDFCFB] font-sans text-[#424242] selection:bg-teal-200">
       <div className="mx-auto flex h-full w-full max-w-[1600px] flex-col px-6 py-6">
@@ -154,7 +150,6 @@ export default function Home() {
           <PlanningPanel
             chatHistory={chatHistory}
             executeSchedule={executeSchedule}
-            handleQuickAction={handleQuickAction}
             isLoading={isLoading}
             setTaskInput={setTaskInput}
             taskInput={taskInput}
@@ -175,14 +170,12 @@ export default function Home() {
 function PlanningPanel({
   chatHistory,
   executeSchedule,
-  handleQuickAction,
   isLoading,
   setTaskInput,
   taskInput,
 }: {
   chatHistory: ChatMessage[];
   executeSchedule: (input: string) => void;
-  handleQuickAction: (input: string) => void;
   isLoading: boolean;
   setTaskInput: (value: string) => void;
   taskInput: string;
@@ -196,18 +189,6 @@ function PlanningPanel({
         <h2 className="mt-3 text-[34px] font-extrabold tracking-tight text-[#303030]">
           What needs to feel easier?
         </h2>
-      </div>
-
-      <div className="mb-5 grid grid-cols-2 gap-3">
-        {['I\'m stuck', 'Break this down', '5 minute version', 'Motivate me'].map((action) => (
-          <button
-            key={action}
-            onClick={() => handleQuickAction(action)}
-            className="rounded-3xl border border-gray-100 bg-[#FDFCFB] px-5 py-4 text-left text-[13px] font-bold text-[#424242] shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition-all hover:border-gray-200 hover:shadow-md active:scale-[0.98]"
-          >
-            {action}
-          </button>
-        ))}
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
