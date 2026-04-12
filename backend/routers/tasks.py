@@ -474,6 +474,40 @@ async def list_tasks(email: str):
         return {"tasks": [], "error": str(e)}
 
 
+@router.delete("/{task_id}")
+async def delete_task(task_id: str, email: str):
+    """Delete a task for the current user so it stays gone across reloads."""
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email")
+
+    try:
+        task = await Task.get(task_id)
+    except Exception:
+        task = None
+
+    if not task or task.user_id != email:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    user = await User.find_one({"email": email})
+
+    try:
+        await remove_task_calendar_event(user, task)
+    except Exception as e:
+        print(f"Calendar cleanup on task delete failed: {e}")
+
+    subtasks = await Subtask.find({"task_id": str(task.id)}).to_list()
+    for subtask in subtasks:
+        await subtask.delete()
+
+    await task.delete()
+
+    return {
+        "status": "success",
+        "deleted_task_id": task_id,
+        "deleted_subtasks": len(subtasks),
+    }
+
+
 # ─── POST /rebalance — Trigger global PW-EDF rebalance ─────────────────
 
 @router.post("/rebalance")

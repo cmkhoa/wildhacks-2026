@@ -354,7 +354,7 @@ export function FocusPage({ initialTask, subtaskData = [], docLinks = [], draftL
         <section className="flex min-h-0 flex-1 items-stretch gap-6 pb-4 xl:gap-8">
           <SideRail
             collapsed={isLeftCollapsed}
-            label="Planning chat"
+            label="AI assistant"
             onClick={() => setIsLeftCollapsed(!isLeftCollapsed)}
             side="left"
           >

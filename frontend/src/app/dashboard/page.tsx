@@ -35,6 +35,27 @@ type ParsedSubtask = {
   steps?: string[];
 };
 
+const deletedTaskIdsKey = (userEmail: string) => `unstuck.deletedTasks.${userEmail}`;
+
+const readDeletedTaskIds = (userEmail: string) => {
+  if (typeof window === 'undefined') return new Set<string>();
+
+  try {
+    const stored = localStorage.getItem(deletedTaskIdsKey(userEmail));
+    return new Set<string>(stored ? JSON.parse(stored) : []);
+  } catch {
+    return new Set<string>();
+  }
+};
+
+const rememberDeletedTaskId = (userEmail: string, taskId: string) => {
+  if (typeof window === 'undefined') return;
+
+  const deletedIds = readDeletedTaskIds(userEmail);
+  deletedIds.add(taskId);
+  localStorage.setItem(deletedTaskIdsKey(userEmail), JSON.stringify([...deletedIds]));
+};
+
 export default function Home() {
   const [taskInput, setTaskInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -43,6 +64,7 @@ export default function Home() {
   const [currentStreak, setCurrentStreak] = useState(0);
   const [previousStreak, setPreviousStreak] = useState(0);
   const [email, setEmail] = useState<string | null>(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const username = email ? email.split('@')[0] : 'Haiha';
   const router = useRouter();
@@ -62,9 +84,14 @@ export default function Home() {
       if (data.tasks) {
         const allCompleted: TaskBlock[] = [];
         const allPending: TaskBlock[] = [];
+        const deletedTaskIds = readDeletedTaskIds(userEmail);
         let gems = 0;
 
         data.tasks.forEach((task: any) => {
+          if (task.id && deletedTaskIds.has(String(task.id))) {
+            return;
+          }
+
           const subtasks: SubtaskInfo[] = (task.subtasks || []).map((st: any) => ({
             id: st.id,
             title: st.title,
@@ -176,6 +203,47 @@ export default function Home() {
   const dailyTasks = activeTask ? [activeTask, ...queuedTasks] : queuedTasks;
   const selectedTask = dailyTasks[selectedTaskIndex] ?? dailyTasks[0] ?? null;
 
+  const deleteTaskAtIndex = async (taskIndex: number) => {
+    const taskToDelete = dailyTasks[taskIndex];
+    const remainingTasks = dailyTasks.filter((_, index) => index !== taskIndex);
+
+    setActiveTask(remainingTasks[0] ?? null);
+    setQueuedTasks(remainingTasks.slice(1));
+    setSelectedTaskIndex((currentIndex) => {
+      if (remainingTasks.length === 0) return 0;
+      if (taskIndex < currentIndex) return currentIndex - 1;
+      if (taskIndex === currentIndex) {
+        return Math.min(currentIndex, remainingTasks.length - 1);
+      }
+      return Math.min(currentIndex, remainingTasks.length - 1);
+    });
+
+    if (!taskToDelete?.id || !email) return;
+
+    rememberDeletedTaskId(email, taskToDelete.id);
+
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      const response = await fetch(
+        `${backendUrl}/api/tasks/${encodeURIComponent(taskToDelete.id)}?email=${encodeURIComponent(email)}`,
+        { method: 'DELETE' }
+      );
+
+      if (!response.ok) {
+        throw new Error('Delete request failed');
+      }
+    } catch (error) {
+      console.error('Failed to delete task from backend', error);
+      setChatHistory((previous) => [
+        ...previous,
+        {
+          role: 'assistant',
+          text: 'I hid that task here, but I could not delete it from the backend yet. Try refreshing the backend and deleting again if it comes back.',
+        },
+      ]);
+    }
+  };
+
   const enterFocusMode = () => {
     if (!selectedTask) return;
 
@@ -204,6 +272,33 @@ export default function Home() {
     }
 
     router.push(`/focus?${params.toString()}`);
+  };
+
+  const confirmLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('userEmail');
+      sessionStorage.clear();
+      document.cookie.split(';').forEach((cookie) => {
+        const name = cookie.split('=')[0]?.trim();
+        if (name) {
+          document.cookie = `${name}=; Max-Age=0; path=/`;
+        }
+      });
+    }
+
+    setEmail(null);
+    setTaskInput('');
+    setSelectedTaskIndex(0);
+    setGemsEarned(0);
+    setCurrentStreak(0);
+    setPreviousStreak(0);
+    setActiveTask(null);
+    setQueuedTasks([]);
+    setCompletedTasks([]);
+    setChatHistory([]);
+    setShowLogoutConfirm(false);
+
+    router.replace('/login');
   };
 
   const executeSchedule = async (inputStr: string) => {
@@ -355,8 +450,45 @@ export default function Home() {
               </span>
               <span className="text-sm font-bold text-[#7a6a45]">{gemsEarned}</span>
             </Link>
+
+            <button
+              type="button"
+              onClick={() => setShowLogoutConfirm(true)}
+              className="rounded-full border border-[#E8ECEA] bg-white px-5 py-2.5 text-sm font-bold text-[#6f7774] shadow-[0_2px_10px_rgba(0,0,0,0.02)] transition-all hover:border-[#F1D7D2] hover:bg-[#FFF7F5] hover:text-[#C05B4B] hover:shadow-md active:scale-[0.98]"
+            >
+              Logout
+            </button>
           </div>
         </header>
+
+        {showLogoutConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#203B37]/25 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-[420px] rounded-[36px] border border-white/80 bg-white p-7 text-center shadow-[0_24px_80px_rgba(32,59,55,0.16)]">
+              <p className="text-[12px] font-extrabold uppercase tracking-widest text-[#828b9a]">
+                Confirm logout
+              </p>
+              <h2 className="mt-3 text-[28px] font-extrabold tracking-tight text-[#303030]">
+                Are you sure you want to log out?
+              </h2>
+              <div className="mt-7 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="rounded-[24px] border border-[#E8ECEA] bg-white px-5 py-4 text-sm font-extrabold text-[#6f7774] shadow-sm transition-all hover:bg-[#F8F6F1] active:scale-[0.98]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmLogout}
+                  className="rounded-[24px] bg-[#67B59F] px-5 py-4 text-sm font-extrabold text-white shadow-[0_8px_24px_rgba(103,181,159,0.25)] transition-all hover:bg-[#5aa38e] active:scale-[0.98]"
+                >
+                  Yes
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {previousStreak > 0 && currentStreak === 0 && (
           <div className="mb-6 flex items-center justify-between rounded-[24px] bg-[#FFEAE5] p-5 shadow-sm">
@@ -386,6 +518,7 @@ export default function Home() {
           />
           <TaskStartPanel
             completedTasks={completedTasks}
+            deleteTaskAtIndex={deleteTaskAtIndex}
             enterFocusMode={enterFocusMode}
             selectedTaskIndex={selectedTaskIndex}
             setSelectedTaskIndex={setSelectedTaskIndex}
@@ -463,12 +596,14 @@ function PlanningPanel({
 
 function TaskStartPanel({
   completedTasks,
+  deleteTaskAtIndex,
   enterFocusMode,
   selectedTaskIndex,
   setSelectedTaskIndex,
   tasks,
 }: {
   completedTasks: TaskBlock[];
+  deleteTaskAtIndex: (index: number) => void;
   enterFocusMode: () => void;
   selectedTaskIndex: number;
   setSelectedTaskIndex: (index: number) => void;
@@ -492,9 +627,10 @@ function TaskStartPanel({
           <div className="space-y-3">
             {tasks.map((task, index) => (
               <TaskItem
-                key={`${task.title}-${task.block_minutes}-${index}`}
+                key={task.id ?? `${task.title}-${task.block_minutes}-${index}`}
                 index={index}
                 isSelected={index === selectedTaskIndex}
+                onDelete={() => deleteTaskAtIndex(index)}
                 onSelect={() => setSelectedTaskIndex(index)}
                 task={task}
               />
@@ -542,11 +678,13 @@ function TaskStartPanel({
 function TaskItem({
   index,
   isSelected,
+  onDelete,
   onSelect,
   task,
 }: {
   index: number;
   isSelected: boolean;
+  onDelete: () => void;
   onSelect: () => void;
   task: TaskBlock;
 }) {
@@ -560,42 +698,52 @@ function TaskItem({
   };
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <article
       className={`w-full rounded-3xl border px-5 py-5 text-left transition-all active:scale-[0.99] ${isSelected
         ? 'border-[#B5A6CC] bg-white shadow-[0_8px_24px_rgba(181,166,204,0.18)]'
         : 'border-gray-100 bg-white/75 shadow-[0_2px_8px_rgba(0,0,0,0.035)] hover:border-gray-200 hover:bg-white hover:shadow-md'
         }`}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
-        <span
-          className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest ${index === 0
-            ? 'bg-[#E7F3ED] text-[#6cb593]'
-            : 'bg-[#F0F1F3] text-[#9a9a9a]'
-            }`}
-        >
-          {index === 0 ? 'Current / next' : `Task ${index + 1}`}
-        </span>
-        {isSelected && (
-          <span className="rounded-full bg-[#FDF3DE] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-[#9a7b32]">
-            Selected
+        <div className="flex flex-wrap gap-2">
+          <span
+            className={`rounded-full px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest ${index === 0
+              ? 'bg-[#E7F3ED] text-[#6cb593]'
+              : 'bg-[#F0F1F3] text-[#9a9a9a]'
+              }`}
+          >
+            {index === 0 ? 'Current / next' : `Task ${index + 1}`}
           </span>
-        )}
+          {isSelected && (
+            <span className="rounded-full bg-[#FDF3DE] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-[#9a7b32]">
+              Selected
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="rounded-full border border-[#F1D7D2] bg-[#FFF7F5] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-widest text-[#C05B4B] transition-all hover:border-[#E9BBB2] hover:bg-[#FFEAE5] active:scale-[0.96]"
+          aria-label={`Delete ${task.title}`}
+        >
+          Delete
+        </button>
       </div>
 
-      <h3 className="text-[18px] font-extrabold leading-snug text-[#303030]">
-        {task.title}
-      </h3>
+      <button type="button" onClick={onSelect} className="w-full text-left">
+        <h3 className="text-[18px] font-extrabold leading-snug text-[#303030]">
+          {task.title}
+        </h3>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span className="rounded-full bg-[#F4F5F7] px-3 py-1.5 text-[11px] font-bold text-[#788294]">
-          {formatBlockMinutes(task.block_minutes)}
-        </span>
-        <span className="rounded-full bg-[#FDF3DE] px-3 py-1.5 text-[11px] font-bold text-[#7a6a45]">
-          +{task.reward_value} gems
-        </span>
-      </div>
-    </button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <span className="rounded-full bg-[#F4F5F7] px-3 py-1.5 text-[11px] font-bold text-[#788294]">
+            {formatBlockMinutes(task.block_minutes)}
+          </span>
+          <span className="rounded-full bg-[#FDF3DE] px-3 py-1.5 text-[11px] font-bold text-[#7a6a45]">
+            +{task.reward_value} gems
+          </span>
+        </div>
+      </button>
+    </article>
   );
 }

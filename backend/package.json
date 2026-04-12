@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "Backend for unstuck",
+  "description": "Backend for UnStuck",
   "main": "main.py",
   "scripts": {
     "dev": ".venv\\Scripts\\uvicorn main:app --reload --port 8080 --env-file .env",
