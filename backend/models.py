@@ -25,6 +25,9 @@ class Task(Document):
     estimated_minutes: int = 30
     actual_minutes: Optional[int] = None
     deadline: Optional[datetime] = None
+    is_fixed_deadline: bool = False  # True for hard deadlines like "due Friday"
+    scheduled_start: Optional[datetime] = None  # When the calendar event starts
+    scheduled_end: Optional[datetime] = None  # When the calendar event ends
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     calendar_event_id: Optional[str] = None
@@ -43,3 +46,5 @@ class User(Document):
     deviation_samples: int = 0  # Number of completed tasks used to compute ratio
     reward_points: int = 0
     grace_passes: int = 0
+    timezone: str = "America/Chicago"  # User's local timezone for calendar scheduling
+

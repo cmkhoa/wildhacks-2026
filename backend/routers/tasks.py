@@ -5,6 +5,7 @@ Core Mechanics:
 1. Honest Estimator — AI responds with adjusted time based on user history
 2. Auto-Buffering — transition buffers injected between context switches
 3. Ripple Effect — "+15 mins" ripples all non-fixed tasks forward
+4. Calendar Sync — One calendar event per parent task
 """
 from fastapi import APIRouter, HTTPException, Body
 from typing import Dict, Any, List
@@ -20,6 +21,10 @@ from services.scheduler_service import (
     get_free_slots, schedule_subtasks, honest_estimate,
     ripple_tasks, update_deviation_ratio,
 )
+from services.calendar_sync_service import (
+    sync_task_to_calendar, update_task_calendar_event,
+    remove_task_calendar_event,
+)
 from models import User, Task, Subtask
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -27,7 +32,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 async def _get_user(email: str) -> User:
     """Fetch user from DB or raise."""
-    user = await User.find_one(User.email == email)
+    user = await User.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=401, detail="User not found. Please log in.")
     return user
@@ -38,7 +43,7 @@ async def _get_user(email: str) -> User:
 @router.post("/process")
 async def process_task(payload: Dict[str, Any] = Body(...)):
     """
-    Full pipeline: parse → honest estimate → schedule with buffers → create resources → persist.
+    Full pipeline: parse → clarify → honest estimate → persist → calendar sync.
     """
     user_input = payload.get("user_input")
     email = payload.get("email")
@@ -56,28 +61,40 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         try:
             user = await _get_user(email)
             has_google = bool(user.access_token and user.refresh_token)
-        except HTTPException:
+        except Exception:
+            # HTTPException (user not found) or Beanie/MongoDB errors — continue without user
             pass
 
-    # ── 2. Fetch existing calendar events ─────────────────────────────
+    # ── 2. Fetch existing calendar events (look a week ahead) ─────────
     if has_google:
         try:
             cal_service = get_calendar_service(user.access_token, user.refresh_token)
             now = datetime.utcnow()
-            eod = now.replace(hour=23, minute=59, second=59)
-            existing_events = fetch_events(cal_service, now, eod)
+            look_ahead = now + timedelta(days=7)
+            existing_events = fetch_events(cal_service, now, look_ahead)
             events_context = format_events_for_context(existing_events)
         except Exception as e:
             print(f"⚠️  Calendar fetch failed: {e}")
 
     # ── 3. Parse with Gemini ──────────────────────────────────────────
     deviation = user.time_deviation_ratio if user else 1.5
+    user_tz = user.timezone if user else "America/Chicago"
     parsed_data = parse_user_task(
         user_input=user_input,
         deviation_ratio=deviation,
         current_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
         existing_events=events_context,
+        user_timezone=user_tz,
     )
+
+    # ── 3b. Handle clarification requests from LLM ───────────────────
+    clarification = parsed_data.get("needs_clarification")
+    if clarification:
+        return {
+            "status": "needs_clarification",
+            "question": clarification,
+            "parsed_plan": parsed_data,
+        }
 
     # ── 4. Honest Estimator — adjust each subtask's time ──────────────
     estimation_messages = []
@@ -97,46 +114,22 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
         task_title=parsed_data.get("title", "Task"),
     )
 
-    # ── 5. Schedule with auto-buffers ─────────────────────────────────
-    now = datetime.utcnow()
-    day_end = now.replace(hour=23, minute=59, second=59)
-    free_slots = get_free_slots(existing_events, now, day_end)
-    schedule_ops = schedule_subtasks(
-        parsed_data.get("subtasks", []),
-        free_slots,
-        deviation,
-        existing_events=existing_events,
-    )
+    # ── 5. Parse deadline from LLM response ───────────────────────────
+    deadline = None
+    is_fixed_deadline = parsed_data.get("is_fixed_deadline", False)
+    deadline_str = parsed_data.get("deadline")
+    if deadline_str:
+        try:
+            deadline = datetime.fromisoformat(deadline_str)
+        except (ValueError, TypeError):
+            print(f"⚠️  Could not parse deadline: {deadline_str}")
 
-    # ── 6. Create Google Calendar events + Drive docs ─────────────────
-    created_events = []
+    # ── 6. Create Google Drive docs if needed ─────────────────────────
     created_docs = []
-
     if has_google:
         try:
-            cal_svc = get_calendar_service(user.access_token, user.refresh_token)
             drive_svc = get_drive_service(user.access_token, user.refresh_token)
             docs_svc = get_docs_service(user.access_token, user.refresh_token)
-
-            for op in schedule_ops:
-                if op.get("overflow"):
-                    continue
-                steps_text = "\n".join(f"☐ {s}" for s in op.get("steps", []))
-                desc = f"Steps:\n{steps_text}" if steps_text else ""
-                if op.get("buffer_minutes"):
-                    desc = f"⏱ {op['buffer_minutes']}min transition buffer before this task\n\n{desc}"
-
-                event_id = create_calendar_event(
-                    cal_svc,
-                    title=op["subtask_title"],
-                    start_time=datetime.fromisoformat(op["start"]),
-                    duration_minutes=op["duration_minutes"],
-                    description=desc,
-                    color_id="9",
-                )
-                op["calendar_event_id"] = event_id
-                created_events.append(event_id)
-
             for st in parsed_data.get("subtasks", []):
                 if st.get("needs_doc") and st.get("doc_title"):
                     try:
@@ -150,10 +143,12 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
                     except Exception as e:
                         print(f"⚠️  Doc creation failed: {e}")
         except Exception as e:
-            print(f"⚠️  Google API failed: {e}")
+            print(f"⚠️  Google Drive API failed: {e}")
 
     # ── 7. Persist to MongoDB ─────────────────────────────────────────
     task_id = None
+    new_task = None
+    subtask_docs = []
     try:
         new_task = Task(
             user_id=email or "anonymous",
@@ -161,14 +156,13 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
             original_prompt=user_input,
             priority=parsed_data.get("priority", "medium"),
             estimated_minutes=parsed_data.get("estimated_minutes", 30),
+            deadline=deadline,
+            is_fixed_deadline=is_fixed_deadline,
         )
         await new_task.insert()
         task_id = str(new_task.id)
 
         for i, st in enumerate(parsed_data.get("subtasks", [])):
-            cal_id = None
-            if i < len(schedule_ops) and not schedule_ops[i].get("overflow"):
-                cal_id = schedule_ops[i].get("calendar_event_id")
             new_subtask = Subtask(
                 task_id=task_id,
                 title=st.get("title", f"Subtask {i+1}"),
@@ -176,21 +170,32 @@ async def process_task(payload: Dict[str, Any] = Body(...)):
                 estimated_minutes=st.get("estimated_minutes", 15),
                 order=i,
                 reward_value=max(5, st.get("estimated_minutes", 15) // 3),
-                calendar_event_id=cal_id,
             )
             await new_subtask.insert()
+            subtask_docs.append({
+                "title": new_subtask.title,
+                "estimated_minutes": new_subtask.estimated_minutes,
+                "steps": new_subtask.steps,
+                "completed": False,
+            })
     except Exception as e:
         print(f"⚠️  DB persistence skipped: {e}")
 
-    # ── 8. Return full plan with honest estimates ─────────────────────
+    # ── 8. Sync parent task to Google Calendar ─────────────────────────
+    calendar_event_id = None
+    if has_google and new_task:
+        calendar_event_id = await sync_task_to_calendar(
+            user, new_task, parsed_data, subtask_docs
+        )
+
+    # ── 9. Return full plan with honest estimates ─────────────────────
     return {
         "status": "success",
         "task_id": task_id,
         "honest_estimate": total_est,
         "estimation_messages": estimation_messages,
         "parsed_plan": parsed_data,
-        "schedule": schedule_ops,
-        "created_events": created_events,
+        "calendar_event_id": calendar_event_id,
         "created_docs": created_docs,
     }
 
@@ -247,7 +252,7 @@ async def ripple_schedule(payload: Dict[str, Any] = Body(...)):
 
 @router.post("/complete")
 async def complete_task(payload: Dict[str, Any] = Body(...)):
-    """Record actual time and update deviation ratio."""
+    """Record actual time, update deviation ratio, and remove calendar event."""
     task_id = payload.get("task_id")
     actual_minutes = payload.get("actual_minutes")
     email = payload.get("email")
@@ -265,22 +270,76 @@ async def complete_task(payload: Dict[str, Any] = Body(...)):
         task.completed_at = datetime.utcnow()
         await task.save()
 
+        # Remove calendar event for completed task
         if email:
-            user = await User.find_one(User.email == email)
-            if user and task.estimated_minutes > 0:
-                new_ratio, new_samples = update_deviation_ratio(
-                    user.time_deviation_ratio, user.deviation_samples,
-                    task.estimated_minutes, actual_minutes,
-                )
-                user.time_deviation_ratio = new_ratio
-                user.deviation_samples = new_samples
-                await user.save()
-                return {
-                    "status": "success",
-                    "new_deviation_ratio": new_ratio,
-                    "message": f"✅ Done! Your time accuracy ratio updated to {new_ratio}x."
-                }
+            user = await User.find_one({"email": email})
+            if user:
+                await remove_task_calendar_event(user, task)
+
+                if task.estimated_minutes > 0:
+                    new_ratio, new_samples = update_deviation_ratio(
+                        user.time_deviation_ratio, user.deviation_samples,
+                        task.estimated_minutes, actual_minutes,
+                    )
+                    user.time_deviation_ratio = new_ratio
+                    user.deviation_samples = new_samples
+                    await user.save()
+                    return {
+                        "status": "success",
+                        "new_deviation_ratio": new_ratio,
+                        "message": f"✅ Done! Your time accuracy ratio updated to {new_ratio}x."
+                    }
         return {"status": "success", "message": "✅ Task completed!"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── POST /subtask/complete — Mark subtask done ─────────────
+
+@router.post("/subtask/complete")
+async def complete_subtask(payload: Dict[str, Any] = Body(...)):
+    """Mark a subtask as done, update reward points, and refresh calendar event."""
+    subtask_id = payload.get("subtask_id")
+    email = payload.get("email")
+
+    if not subtask_id:
+        raise HTTPException(status_code=400, detail="Missing subtask_id")
+
+    try:
+        from bson import ObjectId
+        st = await Subtask.get(ObjectId(subtask_id))
+        if not st:
+            raise HTTPException(status_code=404, detail="Subtask not found")
+
+        st.completed = True
+        await st.save()
+
+        if email:
+            user = await User.find_one({"email": email})
+            if user:
+                user.reward_points += st.reward_value
+                await user.save()
+
+                # Update calendar event description to reflect completion
+                try:
+                    task = await Task.get(ObjectId(st.task_id))
+                    if task and task.calendar_event_id:
+                        all_subtasks = await Subtask.find({"task_id": st.task_id}).sort("order").to_list()
+                        subtask_docs = [{
+                            "title": s.title,
+                            "estimated_minutes": s.estimated_minutes,
+                            "steps": s.steps,
+                            "completed": s.completed,
+                        } for s in all_subtasks]
+                        await update_task_calendar_event(user, task, subtask_docs)
+                except Exception as e:
+                    print(f"⚠️  Calendar update on subtask complete failed: {e}")
+
+                return {"status": "success", "reward_points": user.reward_points}
+                
+        return {"status": "success"}
     except HTTPException:
         raise
     except Exception as e:
@@ -293,10 +352,10 @@ async def complete_task(payload: Dict[str, Any] = Body(...)):
 async def list_tasks(email: str):
     """List all tasks with subtasks for a user."""
     try:
-        tasks = await Task.find(Task.user_id == email).sort("-created_at").to_list()
+        tasks = await Task.find({"user_id": email}).sort("-created_at").to_list()
         result = []
         for task in tasks:
-            subtasks = await Subtask.find(Subtask.task_id == str(task.id)).sort("order").to_list()
+            subtasks = await Subtask.find({"task_id": str(task.id)}).sort("order").to_list()
             result.append({
                 "id": str(task.id),
                 "title": task.title,
@@ -304,6 +363,11 @@ async def list_tasks(email: str):
                 "priority": task.priority,
                 "estimated_minutes": task.estimated_minutes,
                 "actual_minutes": task.actual_minutes,
+                "deadline": task.deadline.isoformat() if task.deadline else None,
+                "is_fixed_deadline": task.is_fixed_deadline,
+                "scheduled_start": task.scheduled_start.isoformat() if task.scheduled_start else None,
+                "scheduled_end": task.scheduled_end.isoformat() if task.scheduled_end else None,
+                "calendar_event_id": task.calendar_event_id,
                 "created_at": task.created_at.isoformat() if task.created_at else None,
                 "subtasks": [{
                     "id": str(st.id),
@@ -312,7 +376,6 @@ async def list_tasks(email: str):
                     "estimated_minutes": st.estimated_minutes,
                     "completed": st.completed,
                     "reward_value": st.reward_value,
-                    "calendar_event_id": st.calendar_event_id,
                 } for st in subtasks],
             })
         return {"tasks": result}
