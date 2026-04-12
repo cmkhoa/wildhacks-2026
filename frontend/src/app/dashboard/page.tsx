@@ -87,7 +87,8 @@ export default function Home() {
     setChatHistory(p => [...p, { role: 'user', text: inputStr }]);
 
     try {
-      const res = await fetch('http://localhost:8000/api/tasks/process', {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+      const res = await fetch(`${backendUrl}/api/tasks/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_input: inputStr })

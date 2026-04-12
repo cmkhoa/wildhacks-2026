@@ -1,0 +1,12 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "Backend for chronosagent",
+  "main": "main.py",
+  "scripts": {
+    "dev": "./venv/bin/uvicorn main:app --reload --port 8080 --env-file .env",
+    "start": "./venv/bin/uvicorn main:app --port 8080 --env-file .env"
+  },
+  "author": "",
+  "license": "ISC"
+}
