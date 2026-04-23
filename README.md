@@ -1,23 +1,17 @@
-# Unstuck 🧠✨
+Unstuck 🧠✨
+Project Overview
+Unstuck is an ADHD-friendly, agentic calendar application designed to battle "executive dysfunction" by abstracting away the cognitive load of planning. Instead of demanding meticulous manual scheduling, the app acts as an ambient assistant where users can simply brain dump their massive tasks into a chat interface. The application was built using a Next.js (React) frontend paired with a Python FastAPI backend and a MongoDB database. To power the automated breakdown of tasks, we integrated the Google Gemini 2.5 Flash API, which parses the text into 1-5 specific subtasks and natively syncs them to Google Calendar and Docs via Google OAuth 2.0. A major technical challenge we fixed was schedule overlapping; to solve this, we implemented a Priority-Weighted Earliest Deadline First (PW-EDF) algorithm that safely "ripples" and pushes non-fixed events backward in the calendar whenever a user needs an extra 15 minutes.
 
-An ADHD-friendly agentic calendar application designed to battle "executive dysfunction." Unstuck abstracts away the cognitive load of planning and time management so you can focus on taking action—one clear block at a time.
+Application Interface
+The Planning Dashboard:
+Here, users can utilize the chat interface to dump their tasks and let the AI break them down into bite-sized, manageable pieces.
 
-## 🚀 The Problem & Inspiration
-Traditional task managers and calendars exacerbate ADHD symptoms by demanding meticulous manual scheduling and presenting overwhelming walls of text. Unstuck acts as an ambient assistant that handles the planning, breaking things down, and adjusting schedules dynamically so you don't have to.
+<img width="2267" height="1409" alt="Screenshot 2026-04-23 123117" src="https://github.com/user-attachments/assets/a4750e1b-47c4-4315-9183-73e0da3a4da7" />
 
-## ✨ Key Features
-- **Agentic Breakdown**: Brain dump massive tasks into our chat. Using Google Gemini 2.5 Flash, Unstuck parses your input, splits it into 1-5 tiny, highly specific subtasks, and assigns precise time estimates.
-- **The "Honest Estimator"**: Unstuck calculates your personalized "Time Deviation Ratio" by tracking actual completion times versus estimates. It uses this background multiplier to protect you from overbooking yourself (Time Blindness).
-- **Automated Workflow**: Native integrations with Google Workspace automatically generate templated Google Docs and draft Gmail emails behind the scenes when a subtask demands it. The "blank page syndrome" is solved before you even begin.
-- **Ripple-Effect Rebalancing**: Uses Priority-Weighted Earliest Deadline First (PW-EDF). If you need an extra 15 minutes, hit a button. Unstuck ripples through your Google Calendar and safely pushes non-fixed events backward without missing hard deadlines.
-- **Gamification (Gems & Streaks)**: Immediate dopamine hits. Earn gems per subtask and build streaks by completing full tasks. Crucially, we prevent "shame death" by allowing users to spend earned Gems to restore broken streaks if they miss a scheduled event!
 
-## 💻 Tech Stack
-- **Frontend**: Next.js (React), TypeScript, Tailwind CSS
-- **Backend API**: Python, FastAPI
-- **Database**: MongoDB (via Beanie ODM)
-- **AI & Integrations**: Google Gemini API, Google Calendar API, Google Drive API, Google Docs API, Gmail API via Google OAuth 2.0
-- **Hosting**: Vercel (Frontend), Render (Backend API via Docker Blueprint)
+Focus Mode:
+Once a task begins, Focus Mode isolates the current subtask to prevent overwhelming walls of text, tracking time and progress while keeping the AI assistant available for targeted help.
+<img width="2274" height="1411" alt="Screenshot 2026-04-23 123153" src="https://github.com/user-attachments/assets/3cc63fdd-ca4e-40f3-bfcd-029110b342b5" />
 
 ## 🛠️ Local Development Setup
 
@@ -41,3 +35,8 @@ npm run dev
 Open **[http://localhost:3000](http://localhost:3000)** to view it in the browser!
 
 *(Note: You will need the appropriate `GEMINI_API_KEY`, `GOOGLE_CLIENT_ID`, and a blank `MONGODB_URI` setup in your environment files to run local services fully).*
+
+Video Demonstration
+
+
+🎥 [Watch the Unstuck Video Demonstration Here] (https://youtu.be/4uqO2ZzVXsA?si=5MoTvegYHpzLtxcu)
